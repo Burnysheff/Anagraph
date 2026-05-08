@@ -1,0 +1,12 @@
+Based on the knowledge graph data, formulate a clear answer to the user's question.
+
+Question: {question}
+
+Data from the graph (Cypher query result):
+{results}
+
+Rules:
+1. Answer in the same language as the question.
+2. If there is no relevant data, say so honestly.
+3. Be concise and informative.
+4. List specific facts from the data.

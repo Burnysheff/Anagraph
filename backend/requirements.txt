@@ -1,0 +1,13 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic-settings==2.7.1
+python-multipart==0.0.20
+neo4j==5.27.0
+openai==1.59.7
+httpx==0.28.1
+PyPDF2==3.0.1
+python-docx==1.1.2
+chardet==5.2.0
+aiofiles==24.1.0
+pytest==8.3.4
+pytest-asyncio==0.25.0
