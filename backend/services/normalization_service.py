@@ -2,7 +2,7 @@ import json
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from config import settings
+from settings import settings
 from models.triplet import Triplet
 
 ALIASES_PATH = Path(__file__).parent.parent / "config" / "aliases.json"

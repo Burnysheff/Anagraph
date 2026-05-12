@@ -17,13 +17,12 @@ class LLMClient(Protocol):
     async def close(self) -> None: ...
 
 
-class GroqLLMClient:
-    def __init__(self, api_key: str, model: str = "llama-3.3-70b-versatile"):
+class OpenAICompatibleLLMClient:
+    """Универсальный клиент для любых OpenAI-совместимых endpoint'ов: Groq, Ollama, vLLM и т.п."""
+
+    def __init__(self, api_key: str, base_url: str, model: str):
         self.model = model
-        self.client = AsyncOpenAI(
-            api_key=api_key,
-            base_url="https://api.groq.com/openai/v1",
-        )
+        self.client = AsyncOpenAI(api_key=api_key or "not-needed", base_url=base_url)
 
     async def generate(
         self,

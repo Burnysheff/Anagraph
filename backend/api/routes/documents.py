@@ -1,4 +1,5 @@
 import asyncio
+import json
 import uuid
 from datetime import datetime, timezone
 
@@ -17,11 +18,34 @@ router = APIRouter()
 
 UPLOAD_DIR = "/app/uploads"
 
+MAX_ENTITY_TYPES = 30
+MAX_ENTITY_TYPE_LEN = 50
+
+
+def _parse_entity_types(raw: str | None) -> list[str] | None:
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        raise HTTPException(400, "entity_types must be valid JSON")
+    if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
+        raise HTTPException(400, "entity_types must be a list of strings")
+    cleaned = [s.strip() for s in parsed if s.strip()]
+    if not cleaned:
+        return None
+    if len(cleaned) > MAX_ENTITY_TYPES:
+        raise HTTPException(400, f"Too many entity types (max {MAX_ENTITY_TYPES})")
+    if any(len(s) > MAX_ENTITY_TYPE_LEN for s in cleaned):
+        raise HTTPException(400, f"Entity type name too long (max {MAX_ENTITY_TYPE_LEN} chars)")
+    return cleaned
+
 
 @router.post("", status_code=202)
 async def upload_document(
     file: UploadFile = File(...),
     language: str = Form("auto"),
+    entity_types: str | None = Form(None),
     doc_repo: InMemoryDocumentRepository = Depends(get_doc_repo),
     pipeline: ExtractionPipeline = Depends(get_extraction_pipeline),
 ):
@@ -31,6 +55,8 @@ async def upload_document(
     ext = file.filename.rsplit(".", 1)[-1].lower()
     if ext not in ("txt", "pdf", "docx", "doc"):
         raise HTTPException(400, f"Unsupported format: {ext}. Use PDF, DOCX, or TXT.")
+
+    parsed_types = _parse_entity_types(entity_types)
 
     doc_id = f"doc_{uuid.uuid4().hex[:12]}"
     file_path = f"{UPLOAD_DIR}/{doc_id}_{file.filename}"
@@ -57,7 +83,7 @@ async def upload_document(
     )
     doc_repo.save(doc)
 
-    asyncio.create_task(pipeline.run(doc, text, language=language))
+    asyncio.create_task(pipeline.run(doc, text, language=language, entity_types=parsed_types))
 
     return {"id": doc_id, "filename": file.filename, "status": "processing"}
 
@@ -65,6 +91,7 @@ async def upload_document(
 class TextInput(BaseModel):
     text: str
     language: str = "auto"
+    entity_types: list[str] | None = None
 
 
 @router.post("/text", status_code=202)
@@ -75,6 +102,15 @@ async def upload_text(
 ):
     if not body.text.strip():
         raise HTTPException(400, "Text is empty")
+
+    types = body.entity_types
+    if types is not None:
+        cleaned = [s.strip() for s in types if s.strip()]
+        if len(cleaned) > MAX_ENTITY_TYPES:
+            raise HTTPException(400, f"Too many entity types (max {MAX_ENTITY_TYPES})")
+        if any(len(s) > MAX_ENTITY_TYPE_LEN for s in cleaned):
+            raise HTTPException(400, f"Entity type name too long (max {MAX_ENTITY_TYPE_LEN} chars)")
+        types = cleaned or None
 
     doc_id = f"doc_{uuid.uuid4().hex[:12]}"
     language = body.language
@@ -91,7 +127,7 @@ async def upload_text(
     )
     doc_repo.save(doc)
 
-    asyncio.create_task(pipeline.run(doc, body.text, language=language))
+    asyncio.create_task(pipeline.run(doc, body.text, language=language, entity_types=types))
 
     return {"id": doc_id, "filename": "[pasted text]", "status": "processing"}
 

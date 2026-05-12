@@ -166,3 +166,37 @@ textarea::placeholder {
   background: #89b4fa;
   transition: width 0.3s;
 }
+
+.dnd-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(30, 30, 46, 0.85);
+  border: 3px dashed #89b4fa;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.dnd-overlay-message {
+  font-size: 1.5rem;
+  color: #89b4fa;
+  font-weight: 500;
+}
+
+@keyframes toast-slide-in {
+  from {
+    transform: translateX(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.toast {
+  pointer-events: auto;
+  animation: toast-slide-in 0.2s ease-out;
+}

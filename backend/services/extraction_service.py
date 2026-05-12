@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from config import settings
+from settings import settings
 from models.triplet import Triplet, ExtractionResult
 from services.llm_client import LLMClient
 

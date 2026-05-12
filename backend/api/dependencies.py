@@ -1,8 +1,8 @@
 from functools import lru_cache
 
-from config import settings
+from settings import settings
 from services.graph_service import GraphService
-from services.llm_client import GroqLLMClient
+from services.llm_client import LLMClient, OpenAICompatibleLLMClient
 from services.extraction_service import ExtractionService
 from services.chunking_service import ChunkingService
 from services.normalization_service import NormalizationService
@@ -20,9 +20,16 @@ def get_graph_service() -> GraphService:
 
 
 @lru_cache
-def get_llm_client() -> GroqLLMClient:
-    return GroqLLMClient(
+def get_llm_client() -> LLMClient:
+    if settings.llm_provider == "ollama":
+        return OpenAICompatibleLLMClient(
+            api_key="ollama",
+            base_url=settings.ollama_base_url,
+            model=settings.ollama_model,
+        )
+    return OpenAICompatibleLLMClient(
         api_key=settings.groq_api_key,
+        base_url=settings.groq_base_url,
         model=settings.groq_model,
     )
 

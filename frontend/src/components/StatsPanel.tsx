@@ -2,13 +2,15 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getGraphStats, clearGraph } from "../api/client";
 import { ENTITY_COLORS, ENTITY_TYPE_LABELS } from "../types";
+import type { GraphNode } from "../types";
 
 interface Props {
   refreshKey: number;
   onClear: () => void;
+  onSelectNode: (node: GraphNode) => void;
 }
 
-export default function StatsPanel({ refreshKey, onClear }: Props) {
+export default function StatsPanel({ refreshKey, onClear, onSelectNode }: Props) {
   const [confirming, setConfirming] = useState(false);
   const [clearing, setClearing] = useState(false);
 
@@ -67,6 +69,48 @@ export default function StatsPanel({ refreshKey, onClear }: Props) {
                 {ENTITY_TYPE_LABELS[t.type as string] ?? t.type}
               </span>
               <span style={{ color: "#a6adc8" }}>{t.count}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {stats.top_connected.length > 0 && (
+        <div style={{ marginTop: "0.75rem" }}>
+          <div style={{ fontSize: "0.8rem", color: "#a6adc8", marginBottom: "0.4rem" }}>
+            Самые связанные
+          </div>
+          {stats.top_connected.slice(0, 10).map((node, i) => (
+            <div
+              key={`${node.name}-${i}`}
+              onClick={() =>
+                onSelectNode({
+                  id: node.name,
+                  name: node.name,
+                  type: node.type,
+                  connections: node.connections,
+                })
+              }
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                fontSize: "0.85rem",
+                padding: "0.2rem 0.25rem",
+                cursor: "pointer",
+                borderRadius: 4,
+              }}
+              onMouseOver={(e) => (e.currentTarget.style.background = "#313244")}
+              onMouseOut={(e) => (e.currentTarget.style.background = "transparent")}
+            >
+              <span style={{ color: "#6c7086", width: 18, textAlign: "right" }}>{i + 1}</span>
+              <span
+                className="type-dot"
+                style={{ background: ENTITY_COLORS[node.type] || "#666" }}
+              />
+              <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {node.name}
+              </span>
+              <span style={{ color: "#a6adc8" }}>{node.connections}</span>
             </div>
           ))}
         </div>

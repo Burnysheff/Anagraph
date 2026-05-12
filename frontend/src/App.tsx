@@ -6,6 +6,7 @@ import SearchBar from "./components/SearchBar";
 import StatsPanel from "./components/StatsPanel";
 import QAPanel from "./components/QAPanel";
 import NodeDetails from "./components/NodeDetails";
+import DocumentList from "./components/DocumentList";
 import type { GraphNode } from "./types";
 import "./App.css";
 
@@ -27,7 +28,12 @@ export default function App() {
         <aside className="sidebar">
           <FilterPanel activeTypes={activeTypes} onChange={setActiveTypes} />
           <SearchBar onSelect={(node) => setSelectedNode(node)} />
-          <StatsPanel refreshKey={refreshKey} onClear={handleRefresh} />
+          <DocumentList refreshKey={refreshKey} onChange={handleRefresh} />
+          <StatsPanel
+            refreshKey={refreshKey}
+            onClear={handleRefresh}
+            onSelectNode={setSelectedNode}
+          />
         </aside>
 
         <main className="main-area">

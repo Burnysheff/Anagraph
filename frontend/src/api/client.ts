@@ -16,20 +16,29 @@ export const api = axios.create({
 
 export async function uploadDocument(
   file: File,
-  language: string = "auto"
+  language: string = "auto",
+  entityTypes?: string[]
 ): Promise<{ id: string; filename: string; status: string }> {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("language", language);
+  if (entityTypes && entityTypes.length > 0) {
+    formData.append("entity_types", JSON.stringify(entityTypes));
+  }
   const { data } = await api.post("/documents", formData);
   return data;
 }
 
 export async function uploadText(
   text: string,
-  language: string = "auto"
+  language: string = "auto",
+  entityTypes?: string[]
 ): Promise<{ id: string; filename: string; status: string }> {
-  const { data } = await api.post("/documents/text", { text, language });
+  const body: Record<string, unknown> = { text, language };
+  if (entityTypes && entityTypes.length > 0) {
+    body.entity_types = entityTypes;
+  }
+  const { data } = await api.post("/documents/text", body);
   return data;
 }
 

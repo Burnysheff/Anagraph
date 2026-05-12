@@ -92,7 +92,8 @@ class GraphService:
         MATCH (n:Entity)
         {type_clause}
         RETURN elementId(n) AS id, n.name AS name, n.type AS type,
-               size([(n)--() | 1]) AS connections
+               size([(n)--() | 1]) AS connections,
+               toString(n.created_at) AS created_at
         ORDER BY connections DESC
         LIMIT $limit
         """
@@ -159,7 +160,8 @@ class GraphService:
         YIELD node, score
         RETURN elementId(node) AS id, node.name AS name,
                node.type AS type,
-               size([(node)--() | 1]) AS connections
+               size([(node)--() | 1]) AS connections,
+               toString(node.created_at) AS created_at
         ORDER BY score DESC
         LIMIT $limit
         """
@@ -184,7 +186,8 @@ class GraphService:
         MATCH (neighbor)
         RETURN elementId(neighbor) AS id, neighbor.name AS name,
                neighbor.type AS type,
-               size([(neighbor)--() | 1]) AS connections
+               size([(neighbor)--() | 1]) AS connections,
+               toString(neighbor.created_at) AS created_at
         LIMIT 50
         """
 

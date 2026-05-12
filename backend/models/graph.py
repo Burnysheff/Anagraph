@@ -6,6 +6,7 @@ class Node(BaseModel):
     name: str
     type: str
     connections: int
+    created_at: str | None = None
 
 
 class Edge(BaseModel):

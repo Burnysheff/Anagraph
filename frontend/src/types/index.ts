@@ -3,6 +3,7 @@ export interface GraphNode {
   name: string;
   type: string;
   connections: number;
+  created_at?: string | null;
 }
 
 export interface GraphEdge {
@@ -26,6 +27,7 @@ export interface Document {
   status: "pending" | "processing" | "completed" | "error";
   created_at: string;
   triplets_extracted: number;
+  error_message?: string | null;
 }
 
 export interface ExtractionProgress {
