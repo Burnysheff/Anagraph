@@ -59,6 +59,7 @@ services:
         condition: service_healthy
     volumes:
       - uploads:/app/uploads
+      - app_data:/app/data
 
   frontend:
     build: ./frontend
@@ -72,3 +73,4 @@ volumes:
   neo4j_data:
   uploads:
   ollama_data:
+  app_data:

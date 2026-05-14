@@ -43,24 +43,19 @@
 
 Типизируй каждую сущность одним из типов: {entity_types}.
 Краткие определения типов:
-- Person — конкретный человек (Ашиш Васвани, Джейкоб Девлин)
-- Organization — компания, университет, лаборатория (Google, OpenAI, МФТИ)
-- Technology — модель, архитектура, фреймворк (BERT, Transformer, GPT-3)
-- Concept — метод, подход, область знания (attention mechanism, MLM, NLP)
-- Date — год или дата (2017, 2018)
-- Event — конференция, событие (NeurIPS 2017)
-- Product — конкретный продукт или версия (BERT-Base, BERT-Large)
-- Location — географическое место (Россия, Санкт-Петербург)
+{type_definitions}
+
+Если ни один тип объективно не подходит — используй Other. Не натягивай неподходящий тип ради того, чтобы избежать Other.
 
 Формат ответа (JSON):
 {
   "triplets": [
     {
-      "subject": "Google",
-      "subject_type": "Organization",
-      "predicate": "разработала",
-      "object": "BERT",
-      "object_type": "Technology"
+      "subject": "имя_сущности",
+      "subject_type": "{example_type}",
+      "predicate": "отношение",
+      "object": "имя_другой_сущности",
+      "object_type": "{example_type}"
     }
   ]
 }

@@ -6,7 +6,8 @@ from services.llm_client import LLMClient, OpenAICompatibleLLMClient
 from services.extraction_service import ExtractionService
 from services.chunking_service import ChunkingService
 from services.normalization_service import NormalizationService
-from services.document_repository import InMemoryDocumentRepository
+from services.document_repository import DocumentRepository, SqliteDocumentRepository
+from services.entity_type_service import EntityTypeService
 from services.extraction_pipeline import ExtractionPipeline
 
 
@@ -35,8 +36,13 @@ def get_llm_client() -> LLMClient:
 
 
 @lru_cache
-def get_doc_repo() -> InMemoryDocumentRepository:
-    return InMemoryDocumentRepository()
+def get_doc_repo() -> DocumentRepository:
+    return SqliteDocumentRepository(settings.database_path)
+
+
+@lru_cache
+def get_entity_type_service() -> EntityTypeService:
+    return EntityTypeService(settings.database_path)
 
 
 @lru_cache

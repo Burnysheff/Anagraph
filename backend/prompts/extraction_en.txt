@@ -43,24 +43,19 @@ Triplets:
 
 Classify each entity as one of: {entity_types}.
 Type definitions:
-- Person — a specific individual (Ashish Vaswani, Jacob Devlin)
-- Organization — company, university, lab (Google, OpenAI, MIT)
-- Technology — model, architecture, framework (BERT, Transformer, GPT-3)
-- Concept — method, approach, field (attention mechanism, MLM, NLP)
-- Date — year or date (2017, 2018)
-- Event — conference, event (NeurIPS 2017)
-- Product — specific product or version (BERT-Base, BERT-Large)
-- Location — geographic place (Russia, San Francisco)
+{type_definitions}
+
+If none of the types objectively fit — use Other. Don't force-fit an inappropriate type just to avoid Other.
 
 Response format (JSON):
 {
   "triplets": [
     {
-      "subject": "Google",
-      "subject_type": "Organization",
-      "predicate": "developed",
-      "object": "BERT",
-      "object_type": "Technology"
+      "subject": "entity_name",
+      "subject_type": "{example_type}",
+      "predicate": "relation",
+      "object": "another_entity_name",
+      "object_type": "{example_type}"
     }
   ]
 }

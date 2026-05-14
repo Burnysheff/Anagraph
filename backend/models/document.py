@@ -19,3 +19,7 @@ class Document(BaseModel):
     created_at: datetime
     triplets_extracted: int = 0
     error_message: str | None = None
+    source_path: str | None = None
+    raw_text: str | None = None
+    language: str | None = None
+    used_type_names: list[str] | None = None

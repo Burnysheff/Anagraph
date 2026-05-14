@@ -2,6 +2,7 @@ import { useState } from "react";
 import DocumentUpload from "./components/DocumentUpload";
 import GraphViewer from "./components/GraphViewer";
 import FilterPanel from "./components/FilterPanel";
+import EntityTypesPanel from "./components/EntityTypesPanel";
 import SearchBar from "./components/SearchBar";
 import StatsPanel from "./components/StatsPanel";
 import QAPanel from "./components/QAPanel";
@@ -12,7 +13,6 @@ import "./App.css";
 
 export default function App() {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
-  const [activeTypes, setActiveTypes] = useState<string[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const handleRefresh = () => setRefreshKey((k) => k + 1);
@@ -26,7 +26,8 @@ export default function App() {
 
       <div className="app-body">
         <aside className="sidebar">
-          <FilterPanel activeTypes={activeTypes} onChange={setActiveTypes} />
+          <EntityTypesPanel />
+          <FilterPanel />
           <SearchBar onSelect={(node) => setSelectedNode(node)} />
           <DocumentList refreshKey={refreshKey} onChange={handleRefresh} />
           <StatsPanel
@@ -39,7 +40,6 @@ export default function App() {
         <main className="main-area">
           <GraphViewer
             refreshKey={refreshKey}
-            activeTypes={activeTypes}
             onNodeSelect={setSelectedNode}
           />
           <QAPanel />
@@ -51,6 +51,10 @@ export default function App() {
           <NodeDetails
             node={selectedNode}
             onClose={() => setSelectedNode(null)}
+            onDeleted={() => {
+              setSelectedNode(null);
+              handleRefresh();
+            }}
           />
         </footer>
       )}

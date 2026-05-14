@@ -28,6 +28,8 @@ export interface Document {
   created_at: string;
   triplets_extracted: number;
   error_message?: string | null;
+  language?: string | null;
+  used_type_names?: string[] | null;
 }
 
 export interface ExtractionProgress {
@@ -56,24 +58,30 @@ export interface GraphStats {
   documents_processed: number;
 }
 
-export const ENTITY_COLORS: Record<string, string> = {
-  Person: "#89b4fa",
-  Organization: "#a6e3a1",
-  Technology: "#fab387",
-  Concept: "#cba6f7",
-  Location: "#f38ba8",
-  Date: "#9399b2",
-  Event: "#94e2d5",
-  Product: "#f5c2e7",
-};
+export interface EntityType {
+  name: string;
+  label: string;
+  color: string;
+  description: string;
+  visible: boolean;
+  is_default: boolean;
+  position: number;
+}
 
-export const ENTITY_TYPE_LABELS: Record<string, string> = {
-  Person: "Персона",
-  Organization: "Организация",
-  Technology: "Технология",
-  Concept: "Концепция",
-  Location: "Место",
-  Date: "Дата",
-  Event: "Событие",
-  Product: "Продукт",
-};
+export interface EntityTypeCreate {
+  name: string;
+  label?: string;
+  description?: string;
+  color?: string;
+}
+
+export interface EntityTypeUpdate {
+  label?: string;
+  description?: string;
+  color?: string;
+  visible?: boolean;
+  position?: number;
+}
+
+export const ORPHAN_TYPE_COLOR = "#585b70";
+export const OTHER_TYPE_NAME = "Other";

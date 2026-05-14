@@ -26,12 +26,9 @@ class Settings(BaseSettings):
     qa_max_tokens: int = 1024
     cypher_fallback_enabled: bool = True
 
-    default_entity_types: list[str] = [
-        "Person", "Organization", "Technology", "Concept",
-        "Location", "Date", "Event", "Product",
-    ]
-
     similarity_threshold: float = 0.85
+
+    database_path: str = "data/anagraph.db"
 
     allowed_origins: list[str] = ["http://localhost:3000"]
 

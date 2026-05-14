@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getGraphStats, clearGraph } from "../api/client";
-import { ENTITY_COLORS, ENTITY_TYPE_LABELS } from "../types";
+import { useEntityTypes } from "../hooks/useEntityTypes";
 import type { GraphNode } from "../types";
 
 interface Props {
@@ -13,6 +13,7 @@ interface Props {
 export default function StatsPanel({ refreshKey, onClear, onSelectNode }: Props) {
   const [confirming, setConfirming] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const { getColor, getLabel } = useEntityTypes();
 
   const { data: stats } = useQuery({
     queryKey: ["stats", refreshKey],
@@ -63,10 +64,10 @@ export default function StatsPanel({ refreshKey, onClear, onSelectNode }: Props)
             >
               <span
                 className="type-dot"
-                style={{ background: ENTITY_COLORS[t.type as string] || "#666" }}
+                style={{ background: getColor(t.type as string) }}
               />
               <span style={{ flex: 1 }}>
-                {ENTITY_TYPE_LABELS[t.type as string] ?? t.type}
+                {getLabel(t.type as string)}
               </span>
               <span style={{ color: "#a6adc8" }}>{t.count}</span>
             </div>
@@ -105,7 +106,7 @@ export default function StatsPanel({ refreshKey, onClear, onSelectNode }: Props)
               <span style={{ color: "#6c7086", width: 18, textAlign: "right" }}>{i + 1}</span>
               <span
                 className="type-dot"
-                style={{ background: ENTITY_COLORS[node.type] || "#666" }}
+                style={{ background: getColor(node.type) }}
               />
               <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {node.name}

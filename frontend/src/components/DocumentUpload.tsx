@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { uploadDocument, uploadText, createExtractionSSE } from "../api/client";
 import { useToast } from "./Toast";
-import { useLocalStorage } from "../utils/useLocalStorage";
 
 interface Props {
   onComplete: () => void;
@@ -9,7 +8,6 @@ interface Props {
 
 const ALLOWED_EXTENSIONS = ["pdf", "docx", "doc", "txt"];
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
-const CUSTOM_TYPES_KEY = "anagraph_custom_types";
 
 function validateFile(file: File): string | null {
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
@@ -22,17 +20,6 @@ function validateFile(file: File): string | null {
   return null;
 }
 
-function parseTypes(raw: string): string[] {
-  return Array.from(
-    new Set(
-      raw
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean)
-    )
-  );
-}
-
 export default function DocumentUpload({ onComplete }: Props) {
   const [uploading, setUploading] = useState(false);
   const [textValue, setTextValue] = useState("");
@@ -43,9 +30,6 @@ export default function DocumentUpload({ onComplete }: Props) {
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dndActive, setDndActive] = useState(false);
-  const [typesOpen, setTypesOpen] = useState(false);
-  const [customTypes, setCustomTypes] = useLocalStorage<string[]>(CUSTOM_TYPES_KEY, []);
-  const [typesInput, setTypesInput] = useState(customTypes.join(", "));
   const fileRef = useRef<HTMLInputElement>(null);
   const dndCounter = useRef(0);
   const toast = useToast();
@@ -78,14 +62,6 @@ export default function DocumentUpload({ onComplete }: Props) {
     );
   };
 
-  const getActiveTypes = (): string[] | undefined => {
-    const fresh = parseTypes(typesInput);
-    if (fresh.length > 0 && JSON.stringify(fresh) !== JSON.stringify(customTypes)) {
-      setCustomTypes(fresh);
-    }
-    return fresh.length > 0 ? fresh : undefined;
-  };
-
   const handleFileUpload = async (file: File) => {
     const validationError = validateFile(file);
     if (validationError) {
@@ -96,7 +72,7 @@ export default function DocumentUpload({ onComplete }: Props) {
     setError(null);
     setProgress(null);
     try {
-      const result = await uploadDocument(file, "auto", getActiveTypes());
+      const result = await uploadDocument(file, "auto");
       startSSE(result.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка загрузки");
@@ -110,7 +86,7 @@ export default function DocumentUpload({ onComplete }: Props) {
     setError(null);
     setProgress(null);
     try {
-      const result = await uploadText(textValue.trim(), "auto", getActiveTypes());
+      const result = await uploadText(textValue.trim(), "auto");
       startSSE(result.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка загрузки");
@@ -122,12 +98,6 @@ export default function DocumentUpload({ onComplete }: Props) {
     const file = e.target.files?.[0];
     if (file) handleFileUpload(file);
     if (fileRef.current) fileRef.current.value = "";
-  };
-
-  const removeType = (type: string) => {
-    const next = customTypes.filter((t) => t !== type);
-    setCustomTypes(next);
-    setTypesInput(next.join(", "));
   };
 
   useEffect(() => {
@@ -206,17 +176,6 @@ export default function DocumentUpload({ onComplete }: Props) {
           Файл
         </button>
 
-        <button
-          className="btn-secondary"
-          onClick={() => setTypesOpen(!typesOpen)}
-          style={{
-            background: customTypes.length > 0 ? "#585b70" : "#45475a",
-          }}
-          title={customTypes.length > 0 ? `Активно: ${customTypes.join(", ")}` : "Свои типы сущностей"}
-        >
-          Типы {customTypes.length > 0 && `(${customTypes.length})`}
-        </button>
-
         {progress && progress.total > 0 && (
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
             <div className="progress-bar" style={{ width: 100 }}>
@@ -235,56 +194,6 @@ export default function DocumentUpload({ onComplete }: Props) {
           <span style={{ fontSize: "0.8rem", color: "#f38ba8", whiteSpace: "nowrap" }}>{error}</span>
         )}
       </div>
-
-      {typesOpen && (
-        <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
-          {customTypes.length > 0 && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
-              {customTypes.map((type) => (
-                <span
-                  key={type}
-                  style={{
-                    background: "#313244",
-                    color: "#cdd6f4",
-                    fontSize: "0.75rem",
-                    padding: "0.15rem 0.5rem",
-                    borderRadius: 12,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "0.3rem",
-                  }}
-                >
-                  {type}
-                  <button
-                    onClick={() => removeType(type)}
-                    style={{
-                      background: "transparent",
-                      color: "#a6adc8",
-                      fontSize: "0.85rem",
-                      padding: 0,
-                      lineHeight: 1,
-                    }}
-                  >
-                    ✕
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
-          <input
-            type="text"
-            value={typesInput}
-            onChange={(e) => setTypesInput(e.target.value)}
-            onBlur={() => {
-              const parsed = parseTypes(typesInput);
-              setCustomTypes(parsed);
-              setTypesInput(parsed.join(", "));
-            }}
-            placeholder="Свои типы через запятую: Drug, Disease, Gene"
-            style={{ fontSize: "0.85rem" }}
-          />
-        </div>
-      )}
 
       {dndActive && !uploading && (
         <div className="dnd-overlay">

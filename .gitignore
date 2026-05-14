@@ -31,6 +31,10 @@ neo4j_data/
 # Uploads
 backend/uploads/
 
+# Local data (SQLite, etc.)
+backend/data/
+data/
+
 # OS
 .DS_Store
 Thumbs.db

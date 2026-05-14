@@ -1,14 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Network } from "vis-network";
 import { DataSet } from "vis-data";
 import { getGraph } from "../api/client";
-import { ENTITY_COLORS } from "../types";
+import { useEntityTypes } from "../hooks/useEntityTypes";
+import { ORPHAN_TYPE_COLOR } from "../types";
 import type { GraphNode, GraphEdge } from "../types";
 
 interface Props {
   refreshKey: number;
-  activeTypes: string[];
   onNodeSelect: (node: GraphNode) => void;
 }
 
@@ -46,22 +46,33 @@ const DIM_EDGE = "#313244";
 const FRESH_BORDER = "#fab387";
 const FRESH_WINDOW_MS = 30_000;
 
-export default function GraphViewer({
-  refreshKey,
-  activeTypes,
-  onNodeSelect,
-}: Props) {
+export default function GraphViewer({ refreshKey, onNodeSelect }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const networkRef = useRef<Network | null>(null);
   const nodesRef = useRef<DataSet<NodeItem> | null>(null);
   const edgesRef = useRef<DataSet<EdgeItem> | null>(null);
   const [edgeTooltip, setEdgeTooltip] = useState<{ x: number; y: number; edge: GraphEdge } | null>(null);
 
+  const { typesByName, getColor } = useEntityTypes();
+
   const { data } = useQuery({
-    queryKey: ["graph", refreshKey, activeTypes],
-    queryFn: () =>
-      getGraph(500, activeTypes.length > 0 ? activeTypes : undefined),
+    queryKey: ["graph", refreshKey],
+    queryFn: () => getGraph(500),
   });
+
+  const visibleData = useMemo(() => {
+    if (!data) return null;
+    const isVisible = (typeName: string) => {
+      const t = typesByName.get(typeName);
+      return t ? t.visible : true;
+    };
+    const nodes = data.nodes.filter((n) => isVisible(n.type));
+    const nodeIds = new Set(nodes.map((n) => n.id));
+    const edges = data.edges.filter(
+      (e) => nodeIds.has(e.source) && nodeIds.has(e.target)
+    );
+    return { nodes, edges };
+  }, [data, typesByName]);
 
   const resetHighlight = () => {
     if (!nodesRef.current || !edgesRef.current) return;
@@ -116,12 +127,12 @@ export default function GraphViewer({
   };
 
   useEffect(() => {
-    if (!containerRef.current || !data) return;
+    if (!containerRef.current || !visibleData) return;
 
     const now = Date.now();
     const freshIds: string[] = [];
-    const nodeItems: NodeItem[] = data.nodes.map((n) => {
-      const bg = ENTITY_COLORS[n.type] || "#585b70";
+    const nodeItems: NodeItem[] = visibleData.nodes.map((n) => {
+      const bg = getColor(n.type) || ORPHAN_TYPE_COLOR;
       const baseColor = {
         background: bg,
         border: bg,
@@ -149,7 +160,7 @@ export default function GraphViewer({
       };
     });
 
-    const edgeItems: EdgeItem[] = data.edges.map((e) => {
+    const edgeItems: EdgeItem[] = visibleData.edges.map((e) => {
       const color = { color: "#45475a", highlight: "#89b4fa" };
       return {
         id: e.id,
@@ -259,11 +270,11 @@ export default function GraphViewer({
       nodesRef.current = null;
       edgesRef.current = null;
     };
-  }, [data, onNodeSelect]);
+  }, [visibleData, onNodeSelect, getColor]);
 
   useEffect(() => {
     setEdgeTooltip(null);
-  }, [data]);
+  }, [visibleData]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -277,13 +288,20 @@ export default function GraphViewer({
   }, []);
 
   return (
-    <div style={{ position: "relative", flex: 1, display: "flex" }}>
+    <div
+      style={{
+        position: "relative",
+        flex: 1,
+        minHeight: 0,
+        overflow: "hidden",
+      }}
+    >
       <div
         ref={containerRef}
         style={{
-          flex: 1,
+          position: "absolute",
+          inset: 0,
           background: "#1e1e2e",
-          minHeight: 400,
         }}
       />
       {edgeTooltip && (

@@ -218,6 +218,18 @@ class GraphService:
             result = await session.run(cypher)
             return [record.data() async for record in result]
 
+    async def delete_node_by_name(self, name: str) -> bool:
+        query = """
+        MATCH (n:Entity {name: $name})
+        WITH n, count(n) AS found
+        DETACH DELETE n
+        RETURN found
+        """
+        async with self.driver.session() as session:
+            result = await session.run(query, {"name": name})
+            record = await result.single()
+            return record is not None and record["found"] > 0
+
     async def delete_by_source(self, source_id: str):
         query = """
         MATCH ()-[r:RELATES]->()

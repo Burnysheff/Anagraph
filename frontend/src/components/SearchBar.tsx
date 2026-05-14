@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { searchNodes } from "../api/client";
-import { ENTITY_COLORS, ENTITY_TYPE_LABELS } from "../types";
+import { useEntityTypes } from "../hooks/useEntityTypes";
 import type { GraphNode } from "../types";
 
 interface Props {
@@ -10,6 +10,7 @@ interface Props {
 
 export default function SearchBar({ onSelect }: Props) {
   const [query, setQuery] = useState("");
+  const { getColor, getLabel } = useEntityTypes();
 
   const { data: results } = useQuery({
     queryKey: ["search", query],
@@ -53,11 +54,11 @@ export default function SearchBar({ onSelect }: Props) {
             >
               <span
                 className="type-dot"
-                style={{ background: ENTITY_COLORS[node.type] || "#666" }}
+                style={{ background: getColor(node.type) }}
               />
               {node.name}
               <span style={{ color: "#a6adc8", marginLeft: "auto" }}>
-                {ENTITY_TYPE_LABELS[node.type] ?? node.type}
+                {getLabel(node.type)}
               </span>
             </div>
           ))}
