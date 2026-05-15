@@ -1,6 +1,10 @@
 # Техническое задание: Система построения графа знаний на основе LLM
 
-## Версия: 1.0 | Дата: 04.04.2026
+## Версия: 1.1 | Дата: 04.04.2026 (ред. сверена с реализацией)
+
+> Документ изначально написан как ТЗ. В версии 1.1 факты, код-примеры, API и
+> структура приведены в соответствие с реальной реализацией репозитория
+> `anagraph`. Сводный профайл текущего состояния — в `PROJECT.md`.
 
 ---
 
@@ -28,7 +32,7 @@
 
 ### 1.1. Название проекта
 
-**KnowledgeGraph Builder** (рабочее название: `kg-builder`)
+**Anagraph** — KnowledgeGraph Builder (репозиторий: `anagraph`)
 
 ### 1.2. Суть проекта
 
@@ -36,25 +40,24 @@
 
 ### 1.3. Ключевые принципы
 
-- **Полная автономность**: система работает локально, без обращения к внешним API. Все данные остаются на инфраструктуре пользователя.
-- **Open-source**: все компоненты (LLM, БД, фреймворки) — свободное ПО.
-- **Модульность**: каждый компонент заменяем. LLM можно поменять на другую, не трогая остальной код.
-- **Универсальность**: работает с произвольными текстами без привязки к домену.
+- **Конфигурируемая приватность**: провайдер LLM выбирается флагом `LLM_PROVIDER`. С `ollama` система работает полностью локально, данные не покидают контур; с `groq` (по умолчанию) запросы уходят в облако.
+- **Модульность**: каждый компонент заменяем. LLM-провайдер — любой OpenAI-совместимый endpoint; репозиторий документов оформлен как `Protocol`.
+- **Универсальность**: работает с произвольными текстами без привязки к домену; набор типов сущностей редактируется пользователем.
 - **Простота развёртывания**: `docker compose up` — и система работает.
 
 ### 1.4. Стек технологий
 
 | Компонент | Технология | Обоснование |
 |-----------|-----------|-------------|
-| Backend | Python 3.11+ / FastAPI | Экосистема ML, async, автодокументация |
-| LLM | Mistral 7B / LLaMA 3 8B (через Ollama) | Баланс качества и ресурсов |
-| Графовая БД | Neo4j Community Edition | Cypher, зрелая экосистема, open-source |
+| Backend | Python 3.11 / FastAPI | Экосистема ML, async, автодокументация |
+| LLM-клиент | `openai` SDK к OpenAI-совместимому endpoint'у | Groq (по умолчанию) или локальная Ollama — один и тот же код |
+| Графовая БД | Neo4j 5 Community Edition | Cypher, зрелая экосистема, open-source |
+| Метаданные | SQLite через `aiosqlite` | Персистентное хранилище документов и реестра типов сущностей |
 | Frontend | React 18 + TypeScript | Интерактивный UI |
 | Визуализация графа | vis.js (vis-network) | Force-directed layout, интерактивность |
 | Контейнеризация | Docker + Docker Compose | Простота развёртывания |
 | Извлечение текста | PyPDF2, python-docx, chardet | Поддержка PDF, DOCX, TXT |
-| Работа с LLM | httpx (async HTTP) | Асинхронные вызовы к Ollama API |
-| ORM/драйвер Neo4j | neo4j (official Python driver) | Официальный драйвер, async поддержка |
+| Драйвер Neo4j | neo4j (official Python driver, async) | Официальный драйвер, async поддержка |
 
 ---
 
@@ -63,15 +66,15 @@
 ### 2.1. Бизнес-цели
 
 1. Предоставить исследователям и аналитикам инструмент для автоматического структурирования знаний из текстовых документов.
-2. Обеспечить конфиденциальность данных за счёт полностью локального развёртывания.
+2. Дать возможность полностью локального развёртывания (`LLM_PROVIDER=ollama`) — тогда данные не покидают контур пользователя.
 3. Снизить порог входа в построение графов знаний — пользователю не нужно знать NLP, Cypher или программирование.
-4. Создать open-source альтернативу проприетарным решениям (LlamaIndex + OpenAI, Microsoft GraphRAG).
+4. Создать самостоятельную альтернативу проприетарным решениям (LlamaIndex + OpenAI, Microsoft GraphRAG): развёртывается одной командой, провайдер LLM выбирается флагом.
 
 ### 2.2. Технические цели
 
 1. Сквозной pipeline: текст → триплеты → граф → визуализация → QA.
-2. Обработка документа 10 000 слов за разумное время (определяется скоростью LLM, ориентир: 5–15 минут на GPU уровня RTX 3060).
-3. Поддержка инкрементального обновления графа (добавление новых документов без перестроения).
+2. Обработка документа 10 000 слов за разумное время (определяется скоростью LLM-провайдера).
+3. Поддержка инкрементального обновления графа (добавление новых документов без перестроения) и переизвлечения всего графа под изменённый набор типов.
 4. QA-компонент с точностью генерации корректных Cypher-запросов ≥ 70% на типичных вопросах.
 
 ---
@@ -171,45 +174,51 @@
 │  │ Frontend │◄──►│   Backend    │◄──►│     Neo4j       │    │
 │  │ React    │    │   FastAPI    │    │  (Bolt: 7687)   │    │
 │  │ :3000    │    │   :8000      │    │  (HTTP: 7474)   │    │
-│  └──────────┘    └──────┬───────┘    └─────────────────┘    │
-│                         │                                    │
-│                         ▼                                    │
-│                  ┌──────────────┐                            │
-│                  │   Ollama     │                            │
-│                  │   LLM API   │                            │
-│                  │   :11434     │                            │
-│                  └──────────────┘                            │
+│  └──────────┘    └──┬────────┬──┘    └─────────────────┘    │
+│                     │        │                              │
+│                     ▼        ▼                              │
+│           ┌──────────────┐  ┌───────────────────────┐      │
+│           │ SQLite       │  │  LLM provider:         │      │
+│           │ data/        │  │  Groq (cloud)  ИЛИ     │      │
+│           │ anagraph.db  │  │  Ollama :11434 (профиль│      │
+│           └──────────────┘  │  compose "ollama")     │      │
+│                             └───────────────────────┘      │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+SQLite хранит документы и реестр типов сущностей (переживают рестарт), Neo4j —
+сам граф. LLM-провайдер — внешний Groq или локальный контейнер Ollama
+(поднимается под профилем `ollama`); код клиента общий.
 
 ### 4.2. Взаимодействие компонентов
 
 ```
-Пользователь                Frontend              Backend                 Ollama              Neo4j
+Пользователь                Frontend              Backend                  LLM                Neo4j
      │                         │                     │                      │                   │
      │── загрузить файл ──────►│                     │                      │                   │
      │                         │── POST /documents ─►│                      │                   │
+     │                         │   (доп.: запись в SQLite)                  │                   │
      │                         │                     │── читает файл ──────►│                   │
      │                         │                     │── чанкинг ──────────►│                   │
      │                         │                     │                      │                   │
-     │                         │                     │── POST /api/generate │                   │
+     │                         │                     │── chat.completions   │                   │
      │                         │                     │   (промпт + чанк) ──►│                   │
      │                         │                     │◄── JSON триплеты ────│                   │
      │                         │                     │                      │                   │
      │                         │                     │── нормализация ─────►│                   │
-     │                         │                     │── MERGE Cypher ──────────────────────────►│
+     │                         │                     │── UNWIND MERGE ──────────────────────────►│
      │                         │                     │                      │                   │
-     │                         │◄── SSE: прогресс ───│                      │                   │
-     │◄── обновление UI ──────│                     │                      │                   │
+     │                         │── SSE: GET /extraction/{id}/status ────────►│ (опрос pipeline.jobs)
+     │◄── обновление UI ──────│◄── progress / complete ──────────────────────│                   │
      │                         │                     │                      │                   │
      │── задать вопрос ───────►│                     │                      │                   │
      │                         │── POST /qa ─────────►│                      │                   │
-     │                         │                     │── POST /api/generate │                   │
+     │                         │                     │── chat.completions   │                   │
      │                         │                     │   (вопрос→Cypher) ──►│                   │
      │                         │                     │◄── Cypher-запрос ────│                   │
-     │                         │                     │── выполнить Cypher ──────────────────────►│
+     │                         │                     │── readonly Cypher ───────────────────────►│
      │                         │                     │◄── результат ────────────────────────────│
-     │                         │                     │── POST /api/generate │                   │
+     │                         │                     │── chat.completions   │                   │
      │                         │                     │   (формирование ──── │                   │
      │                         │                     │    ответа)           │                   │
      │                         │◄── ответ + Cypher ──│                      │                   │
@@ -219,42 +228,48 @@
 ### 4.3. Структура проекта
 
 ```
-kg-builder/
-├── docker-compose.yml
+anagraph/
+├── docker-compose.yml              # neo4j + backend + frontend (+ ollama под профилем)
 ├── .env.example
-├── README.md
+├── PROJECT.md                      # сводный профайл текущего состояния
 │
 ├── backend/
 │   ├── Dockerfile
 │   ├── requirements.txt
-│   ├── main.py                     # FastAPI app, точка входа
-│   ├── config.py                   # Конфигурация (Pydantic Settings)
+│   ├── main.py                     # FastAPI app, lifespan (init SQLite, seed типов, индексы Neo4j)
+│   ├── settings.py                 # Конфигурация (pydantic-settings, .env из корня репозитория)
 │   │
 │   ├── api/
 │   │   ├── __init__.py
 │   │   ├── routes/
-│   │   │   ├── documents.py        # POST /documents, GET /documents
-│   │   │   ├── graph.py            # GET /graph/nodes, GET /graph/edges, GET /graph/stats
+│   │   │   ├── documents.py        # POST/GET/DELETE /documents (+ /documents/text)
+│   │   │   ├── graph.py            # /graph, /stats, /clear, /search, /node/*, /types-snapshot, /re-extract
 │   │   │   ├── qa.py               # POST /qa
-│   │   │   └── extraction.py       # POST /extract, GET /extract/{job_id}/status
-│   │   └── dependencies.py         # DI: Neo4j driver, LLM client
+│   │   │   ├── extraction.py       # GET /extraction/{doc_id}/status (SSE)
+│   │   │   └── entity_types.py     # CRUD реестра типов сущностей
+│   │   └── dependencies.py         # DI: graph, llm, doc repo, entity-type service, pipeline
 │   │
 │   ├── services/
 │   │   ├── __init__.py
 │   │   ├── document_service.py     # Извлечение текста из PDF/DOCX/TXT
 │   │   ├── chunking_service.py     # Разбиение текста на чанки
-│   │   ├── extraction_service.py   # Вызов LLM, парсинг триплетов
-│   │   ├── normalization_service.py # Нормализация, дедупликация
+│   │   ├── extraction_service.py   # Вызов LLM, парсинг и валидация триплетов
+│   │   ├── normalization_service.py # Нормализация, дедупликация (алиасы из config/aliases.json)
+│   │   ├── extraction_pipeline.py  # Оркестратор: run() + re_extract_all(), прогресс в памяти
 │   │   ├── graph_service.py        # Запись/чтение Neo4j
 │   │   ├── qa_service.py           # Text-to-Cypher + формирование ответа
-│   │   └── llm_client.py           # Обёртка над Ollama API
+│   │   ├── llm_client.py           # Protocol + OpenAICompatibleLLMClient (Groq/Ollama)
+│   │   ├── document_repository.py  # Protocol + SqliteDocumentRepository (+ InMemory запасной)
+│   │   ├── entity_type_service.py  # Реестр типов сущностей в SQLite (CRUD, дефолты)
+│   │   └── storage.py              # DDL-схема SQLite + init_database()
 │   │
 │   ├── models/
 │   │   ├── __init__.py
-│   │   ├── triplet.py              # Pydantic: Triplet, Entity, Relation
+│   │   ├── triplet.py              # Pydantic: Triplet, ExtractionResult
 │   │   ├── document.py             # Pydantic: Document, Chunk
-│   │   ├── graph.py                # Pydantic: Node, Edge, GraphStats
-│   │   └── qa.py                   # Pydantic: QARequest, QAResponse
+│   │   ├── graph.py                # Pydantic: Node, Edge, GraphData, GraphStats
+│   │   ├── qa.py                   # Pydantic: QARequest, QAResponse
+│   │   └── entity_type.py          # Pydantic: EntityType, EntityTypeCreate, EntityTypeUpdate
 │   │
 │   ├── prompts/
 │   │   ├── extraction_ru.txt       # Промпт извлечения (русский)
@@ -262,16 +277,18 @@ kg-builder/
 │   │   ├── text_to_cypher.txt      # Промпт Text-to-Cypher
 │   │   └── answer_generation.txt   # Промпт формирования ответа
 │   │
+│   ├── config/
+│   │   └── aliases.json            # Алиасы сущностей и предикатов
+│   │
 │   └── tests/
 │       ├── test_chunking.py
 │       ├── test_extraction.py
 │       ├── test_normalization.py
-│       ├── test_graph_service.py
-│       ├── test_qa_service.py
-│       └── conftest.py             # Фикстуры: mock LLM, test Neo4j
+│       └── conftest.py             # Фикстуры: MockLLMClient
 │
 ├── frontend/
 │   ├── Dockerfile
+│   ├── nginx.conf
 │   ├── package.json
 │   ├── tsconfig.json
 │   ├── vite.config.ts
@@ -280,25 +297,28 @@ kg-builder/
 │       ├── App.tsx
 │       ├── main.tsx
 │       ├── api/
-│       │   └── client.ts           # Axios/fetch обёртки для backend API
+│       │   └── client.ts           # Axios-обёртки + SSE для backend API
 │       ├── components/
-│       │   ├── DocumentUpload.tsx   # Форма загрузки документа
+│       │   ├── DocumentUpload.tsx   # Форма загрузки документа (текст/файл/dnd)
+│       │   ├── DocumentList.tsx     # Список документов с polling
 │       │   ├── GraphViewer.tsx      # vis.js визуализация
-│       │   ├── NodeDetails.tsx      # Панель свойств узла
-│       │   ├── FilterPanel.tsx      # Фильтрация по типам
+│       │   ├── NodeDetails.tsx      # Панель свойств узла + удаление узла
+│       │   ├── FilterPanel.tsx      # Фильтрация по типам + orphan-типы
+│       │   ├── EntityTypesPanel.tsx # CRUD реестра типов + переизвлечение графа
 │       │   ├── SearchBar.tsx        # Поиск узлов
-│       │   ├── QAPanel.tsx          # Вопрос-ответ интерфейс
+│       │   ├── QAPanel.tsx          # Вопрос-ответ интерфейс + история
 │       │   ├── StatsPanel.tsx       # Статистика графа
-│       │   └── ProgressBar.tsx      # Прогресс извлечения
+│       │   └── Toast.tsx            # ToastProvider + useToast
 │       ├── hooks/
-│       │   ├── useGraph.ts          # Состояние графа
-│       │   └── useExtraction.ts     # SSE подключение для прогресса
+│       │   └── useEntityTypes.ts    # react-query над реестром типов
+│       ├── utils/
+│       │   ├── time.ts              # formatRelative
+│       │   └── useLocalStorage.ts   # versioned wrapper (история QA)
 │       └── types/
 │           └── index.ts             # TypeScript типы
 │
 └── scripts/
-    ├── seed_example.py              # Загрузка примера для демонстрации
-    └── benchmark.py                 # Бенчмарк: скорость, качество
+    └── seed_example.py              # Загрузка примера для демонстрации
 ```
 
 ---
@@ -310,27 +330,34 @@ kg-builder/
 #### 5.1.1. Точка входа (`main.py`)
 
 ```python
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
-from api.routes import documents, graph, qa, extraction
-from api.dependencies import init_neo4j, close_neo4j
+
+from api.dependencies import get_entity_type_service, get_graph_service
+from api.routes import documents, entity_types, graph, qa, extraction
+from services.storage import init_database
+from settings import settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_neo4j()      # Подключение к Neo4j, создание индексов
+    await init_database(settings.database_path)            # схема SQLite
+    await get_entity_type_service().ensure_initialized()   # сид реестра типов
+    graph_service = get_graph_service()
+    await graph_service.create_indexes()                   # индексы Neo4j
     yield
-    await close_neo4j()     # Закрытие соединения
+    await graph_service.close()
 
 app = FastAPI(
-    title="KG Builder API",
-    version="1.0.0",
+    title="Anagraph API",
+    description="Knowledge Graph Builder from unstructured text",
+    version="0.1.0",
     lifespan=lifespan,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=settings.allowed_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -339,246 +366,227 @@ app.include_router(documents.router, prefix="/api/documents", tags=["documents"]
 app.include_router(graph.router, prefix="/api/graph", tags=["graph"])
 app.include_router(qa.router, prefix="/api/qa", tags=["qa"])
 app.include_router(extraction.router, prefix="/api/extraction", tags=["extraction"])
+app.include_router(entity_types.router, prefix="/api/entity-types", tags=["entity-types"])
 ```
 
-#### 5.1.2. Конфигурация (`config.py`)
+#### 5.1.2. Конфигурация (`settings.py`)
 
 ```python
+from pathlib import Path
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # Neo4j
     neo4j_uri: str = "bolt://neo4j:7687"
     neo4j_user: str = "neo4j"
-    neo4j_password: str = "password"
-    
-    # Ollama
-    ollama_base_url: str = "http://ollama:11434"
-    ollama_model: str = "mistral:7b-instruct"
-    
+    neo4j_password: str = "changeme"
+
+    # LLM provider: "groq" | "ollama"
+    llm_provider: str = "groq"
+
+    groq_api_key: str = ""
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    groq_model: str = "llama-3.3-70b-versatile"
+
+    ollama_base_url: str = "http://localhost:11434/v1"
+    ollama_model: str = "llama3.1:8b"
+
     # Extraction
     chunk_size: int = 1200          # токенов
     chunk_overlap: int = 150        # токенов
     max_retries: int = 3            # повторных попыток при невалидном JSON
     extraction_temperature: float = 0.1
-    
+
     # QA
     qa_temperature: float = 0.0
     qa_max_tokens: int = 1024
     cypher_fallback_enabled: bool = True
-    
-    # Entity types (по умолчанию; пользователь может переопределить)
-    default_entity_types: list[str] = [
-        "Person", "Organization", "Technology", "Concept",
-        "Location", "Date", "Event", "Product"
-    ]
-    
+
     # Normalization
     similarity_threshold: float = 0.85  # порог для дедупликации
-    
+
+    # SQLite (документы + реестр типов сущностей)
+    database_path: str = "data/anagraph.db"
+
+    allowed_origins: list[str] = ["http://localhost:3000"]
+
     class Config:
-        env_file = ".env"
+        env_file = Path(__file__).resolve().parent.parent / ".env"
+        extra = "ignore"
 
 settings = Settings()
 ```
 
+> Файл называется `settings.py` (не `config.py`), `.env` читается из корня
+> репозитория. Набор типов сущностей в `settings` больше не хранится — это
+> отдельный персистентный реестр в SQLite (см. §5.4 и §6.4), который пользователь
+> редактирует через UI/API.
+
 ### 5.2. LLM Client (`llm_client.py`)
 
-Обёртка над Ollama API (OpenAI-совместимый формат):
+`LLMClient` — это `typing.Protocol`; единственная реализация `OpenAICompatibleLLMClient`
+работает с любым OpenAI-совместимым endpoint'ом (Groq, Ollama, vLLM и т.п.).
+Конкретный провайдер выбирается в `dependencies.py` по `settings.llm_provider`.
 
 ```python
-import httpx
-from config import settings
+from typing import Protocol, runtime_checkable
+from openai import AsyncOpenAI
 
-class LLMClient:
-    def __init__(self):
-        self.base_url = settings.ollama_base_url
-        self.model = settings.ollama_model
-        self.client = httpx.AsyncClient(timeout=120.0)  # LLM может думать долго
-    
+@runtime_checkable
+class LLMClient(Protocol):
     async def generate(
-        self,
-        prompt: str,
-        system: str = "",
-        temperature: float = 0.1,
-        max_tokens: int = 4096,
-        format: str = "json",  # "json" заставляет Ollama возвращать валидный JSON
+        self, prompt: str, system: str = "", temperature: float = 0.1,
+        max_tokens: int = 4096, response_format: str = "json",
+    ) -> str: ...
+    async def close(self) -> None: ...
+
+
+class OpenAICompatibleLLMClient:
+    """Универсальный клиент для любых OpenAI-совместимых endpoint'ов."""
+
+    def __init__(self, api_key: str, base_url: str, model: str):
+        self.model = model
+        self.client = AsyncOpenAI(api_key=api_key or "not-needed", base_url=base_url)
+
+    async def generate(
+        self, prompt: str, system: str = "", temperature: float = 0.1,
+        max_tokens: int = 4096, response_format: str = "json",
     ) -> str:
-        """Вызов LLM через Ollama API."""
-        response = await self.client.post(
-            f"{self.base_url}/api/chat",
-            json={
-                "model": self.model,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": prompt},
-                ],
-                "stream": False,
-                "format": format,
-                "options": {
-                    "temperature": temperature,
-                    "num_predict": max_tokens,
-                },
-            },
-        )
-        response.raise_for_status()
-        return response.json()["message"]["content"]
-    
-    async def close(self):
-        await self.client.aclose()
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        kwargs: dict = {
+            "model": self.model, "messages": messages,
+            "temperature": temperature, "max_tokens": max_tokens,
+        }
+        if response_format == "json":
+            kwargs["response_format"] = {"type": "json_object"}
+
+        response = await self.client.chat.completions.create(**kwargs)
+        return response.choices[0].message.content or ""
+
+    async def close(self) -> None:
+        await self.client.close()
 ```
 
-**Ключевое решение:** Ollama поддерживает параметр `"format": "json"`, который заставляет модель генерировать валидный JSON. Это критически важно для надёжного парсинга триплетов и устраняет необходимость сложной обработки ошибок парсинга.
+**Ключевое решение:** один и тот же код обслуживает облачный Groq и локальную
+Ollama — оба предоставляют OpenAI-совместимый `chat.completions`. На извлечении
+запрос идёт в JSON-mode (`response_format={"type": "json_object"}`), что заставляет
+модель генерировать валидный JSON и упрощает парсинг триплетов; для text-to-Cypher
+и генерации ответа используется обычный текстовый режим.
 
 ### 5.3. Neo4j Service (`graph_service.py`)
 
 ```python
+import re
 from neo4j import AsyncGraphDatabase
 from models.triplet import Triplet
-from config import settings
+from models.graph import Node, Edge, GraphData, GraphStats
 
 class GraphService:
-    def __init__(self):
-        self.driver = AsyncGraphDatabase.driver(
-            settings.neo4j_uri,
-            auth=(settings.neo4j_user, settings.neo4j_password),
-        )
-    
+    def __init__(self, uri: str, user: str, password: str):
+        self.driver = AsyncGraphDatabase.driver(uri, auth=(user, password))
+
     async def create_indexes(self):
-        """Создание индексов при старте приложения."""
+        """Индексы создаются на старте приложения (lifespan)."""
         async with self.driver.session() as session:
-            # Уникальный constraint для каждого типа — создаётся динамически
-            # Полнотекстовый индекс для поиска
-            await session.run("""
-                CREATE FULLTEXT INDEX entityNameIndex IF NOT EXISTS
-                FOR (n:Entity) ON EACH [n.name]
-            """)
-            # Индекс по name для быстрого MERGE
-            await session.run("""
-                CREATE INDEX entityNameIdx IF NOT EXISTS
-                FOR (n:Entity) ON (n.name)
-            """)
-    
-    async def save_triplet(self, triplet: Triplet, source_id: str):
-        """Сохранение одного триплета в Neo4j."""
-        query = """
-        MERGE (s:Entity {name: $subject_name})
-        ON CREATE SET s.type = $subject_type, s.created_at = datetime()
-        ON MATCH SET s.type = COALESCE(s.type, $subject_type)
-        
-        MERGE (o:Entity {name: $object_name})
-        ON CREATE SET o.type = $object_type, o.created_at = datetime()
-        ON MATCH SET o.type = COALESCE(o.type, $object_type)
-        
-        MERGE (s)-[r:RELATES {type: $predicate}]->(o)
-        ON CREATE SET r.source = $source, r.context = $context, r.created_at = datetime()
-        """
-        # Также добавляем label = типу сущности
-        # Neo4j не позволяет MERGE с динамическими labels, 
-        # поэтому добавляем label отдельным запросом
-        label_query_s = f"MATCH (n:Entity {{name: $name}}) SET n:{triplet.subject_type}"
-        label_query_o = f"MATCH (n:Entity {{name: $name}}) SET n:{triplet.object_type}"
-        
-        async with self.driver.session() as session:
-            await session.run(query, {
-                "subject_name": triplet.subject,
-                "subject_type": triplet.subject_type,
-                "object_name": triplet.object,
-                "object_type": triplet.object_type,
-                "predicate": triplet.predicate,
-                "source": source_id,
-                "context": triplet.context,
-            })
-            await session.run(label_query_s, {"name": triplet.subject})
-            await session.run(label_query_o, {"name": triplet.object})
-    
+            await session.run("CREATE FULLTEXT INDEX entityNameIndex IF NOT EXISTS "
+                              "FOR (n:Entity) ON EACH [n.name]")
+            await session.run("CREATE INDEX entityNameIdx IF NOT EXISTS "
+                              "FOR (n:Entity) ON (n.name)")
+            await session.run("CREATE INDEX entityTypeIdx IF NOT EXISTS "
+                              "FOR (n:Entity) ON (n.type)")
+
     async def save_triplets(self, triplets: list[Triplet], source_id: str):
-        """Батчевое сохранение триплетов."""
-        for triplet in triplets:
-            await self.save_triplet(triplet, source_id)
-    
-    async def get_all_nodes(self, limit: int = 500) -> list[dict]:
-        """Получение всех узлов для визуализации."""
+        """Батчевое сохранение: один UNWIND + MERGE на все триплеты."""
+        if not triplets:
+            return
+        query = """
+        UNWIND $triplets AS t
+        MERGE (s:Entity {name: t.subject_name})
+        ON CREATE SET s.type = t.subject_type, s.created_at = datetime()
+        ON MATCH SET s.type = COALESCE(s.type, t.subject_type)
+        MERGE (o:Entity {name: t.object_name})
+        ON CREATE SET o.type = t.object_type, o.created_at = datetime()
+        ON MATCH SET o.type = COALESCE(o.type, t.object_type)
+        MERGE (s)-[r:RELATES {type: t.predicate}]->(o)
+        ON CREATE SET r.source = $source, r.context = t.context,
+                      r.confidence = t.confidence, r.created_at = datetime()
+        """
         async with self.driver.session() as session:
-            result = await session.run("""
-                MATCH (n:Entity)
-                RETURN n.name AS name, n.type AS type, 
-                       id(n) AS id, 
-                       size([(n)--() | 1]) AS connections
-                ORDER BY connections DESC
-                LIMIT $limit
-            """, {"limit": limit})
-            return [dict(record) async for record in result]
-    
-    async def get_all_edges(self, limit: int = 1000) -> list[dict]:
-        """Получение всех рёбер для визуализации."""
-        async with self.driver.session() as session:
-            result = await session.run("""
-                MATCH (s:Entity)-[r:RELATES]->(o:Entity)
-                RETURN id(s) AS source, id(o) AS target, 
-                       r.type AS type, r.context AS context
-                LIMIT $limit
-            """, {"limit": limit})
-            return [dict(record) async for record in result]
-    
-    async def get_stats(self) -> dict:
-        """Статистика графа."""
-        async with self.driver.session() as session:
-            nodes = await session.run("MATCH (n:Entity) RETURN count(n) AS count")
-            edges = await session.run("MATCH ()-[r:RELATES]->() RETURN count(r) AS count")
-            types = await session.run("""
-                MATCH (n:Entity) 
-                RETURN n.type AS type, count(n) AS count 
-                ORDER BY count DESC
-            """)
-            top_nodes = await session.run("""
-                MATCH (n:Entity)
-                RETURN n.name AS name, n.type AS type, 
-                       size([(n)--() | 1]) AS connections
-                ORDER BY connections DESC LIMIT 10
-            """)
-            return {
-                "total_nodes": (await nodes.single())["count"],
-                "total_edges": (await edges.single())["count"],
-                "types_distribution": [dict(r) async for r in types],
-                "top_connected": [dict(r) async for r in top_nodes],
-            }
-    
-    async def search_nodes(self, query: str, limit: int = 20) -> list[dict]:
-        """Полнотекстовый поиск узлов."""
-        async with self.driver.session() as session:
-            result = await session.run("""
-                CALL db.index.fulltext.queryNodes('entityNameIndex', $query + '~')
-                YIELD node, score
-                RETURN node.name AS name, node.type AS type, score
-                LIMIT $limit
-            """, {"query": query, "limit": limit})
-            return [dict(record) async for record in result]
-    
-    async def get_node_neighborhood(self, node_name: str, depth: int = 1) -> dict:
-        """Окружение конкретного узла."""
-        async with self.driver.session() as session:
-            result = await session.run("""
-                MATCH path = (center:Entity {name: $name})-[*1..$depth]-(neighbor:Entity)
-                UNWIND relationships(path) AS rel
-                WITH DISTINCT startNode(rel) AS s, rel, endNode(rel) AS o
-                RETURN s.name AS source_name, s.type AS source_type,
-                       rel.type AS relation,
-                       o.name AS target_name, o.type AS target_type
-            """, {"name": node_name, "depth": depth})
-            return [dict(record) async for record in result]
-    
-    async def execute_cypher(self, cypher: str) -> list[dict]:
-        """Выполнение произвольного Cypher-запроса (для QA)."""
-        async with self.driver.session() as session:
-            result = await session.run(cypher)
-            return [dict(record) async for record in result]
-    
+            await session.run(query, {"triplets": [...], "source": source_id})
+        # Динамические labels — отдельными запросами (Neo4j не умеет dynamic
+        # labels внутри UNWIND); имя типа санитизируется регуляркой.
+        for t in triplets:
+            ...  # MATCH (n:Entity {name: $name}) SET n:`<sanitized_type>`
+
+    # get_all_nodes(limit, types_filter) / get_all_edges(limit) / get_graph()
+    #   -> возвращают Pydantic-модели Node/Edge/GraphData; id узлов и рёбер —
+    #      строковый elementId(); у узла также отдаётся created_at.
+    # get_stats(documents_processed) -> GraphStats
+    # search_nodes(query, limit) -> fulltext-поиск по entityNameIndex (fuzzy '~')
+    # get_node_neighborhood(name, depth) -> GraphData (узлы + рёбра соседства)
+    # execute_cypher_readonly(cypher) -> прогоняет _validate_readonly() и
+    #   выполняет запрос (используется QA)
+    # delete_node_by_name(name) -> DETACH DELETE узла, bool «найден ли»
+    # delete_by_source(source_id) -> удаляет рёбра документа + осиротевшие узлы
+    # clear_all() -> MATCH (n) DETACH DELETE n
+
     async def close(self):
         await self.driver.close()
+
+
+_FORBIDDEN = re.compile(
+    r'\b(CREATE|DELETE|DETACH|SET|REMOVE|MERGE|DROP|CALL\s+dbms)\b', re.IGNORECASE)
+
+def _validate_readonly(cypher: str):
+    if _FORBIDDEN.search(cypher):
+        raise ValueError("Only read-only Cypher queries are allowed")
 ```
 
-**Ключевое решение**: используем единый label `Entity` + свойство `type` + дополнительные labels для каждого типа. Это обеспечивает и гибкость (произвольные типы), и производительность (индексы по labels).
+**Ключевые решения**:
+- Единый label `Entity` + свойство `type` + дополнительный label по типу — гибкость произвольных типов и производительность индексов.
+- Все триплеты чанка пишутся одним `UNWIND ... MERGE` (а не по одному на запрос).
+- `id` узлов и рёбер в API — строковый `elementId()` Neo4j.
+- Пользовательский Cypher из QA проходит проверку `_validate_readonly` по чёрному списку ключевых слов.
+
+### 5.4. Хранилище метаданных (SQLite)
+
+Документы и реестр типов сущностей хранятся в SQLite (`data/anagraph.db`, доступ
+через `aiosqlite`). Схема создаётся на старте (`services/storage.py:init_database`,
+`CREATE TABLE IF NOT EXISTS` — без отдельных миграций):
+
+- Таблица `documents` — поля документа (см. §6.1), включая `source_path`,
+  `raw_text`, `language`, `used_type_names` (JSON-снапшот реестра типов на момент
+  загрузки) — нужны для переизвлечения графа.
+- Таблица `entity_types` — реестр типов сущностей.
+
+`DocumentRepository` оформлен как `Protocol` с двумя реализациями:
+`SqliteDocumentRepository` (используется) и `InMemoryDocumentRepository` (запасная).
+Благодаря этому хранилище заменяемо (например, на Postgres) без правок остального кода.
+
+> **Изменение относительно исходного ТЗ**: документы больше не живут только в
+> памяти процесса — они персистентны и переживают рестарт backend. В памяти
+> остаётся лишь состояние фоновых задач (`ExtractionPipeline.jobs`,
+> `re_extract_job`).
+
+### 5.5. Реестр типов сущностей (`entity_type_service.py`)
+
+`EntityTypeService` управляет таблицей `entity_types`. Каждый тип:
+`name` (латинский идентификатор), `label` (отображаемое имя), `color` (hex),
+`description` (краткое определение — подставляется в промпт извлечения),
+`visible` (флаг фильтра в UI), `is_default`, `position`.
+
+- При первом старте реестр сидится стандартным набором: `Person, Organization,
+  Technology, Concept, Location, Date, Event, Product` + зарезервированный тип
+  `Other` (fallback для неклассифицируемых сущностей; удалить нельзя).
+- CRUD-операции с валидацией (имя — латиница/цифры/`_`, цвет — `#rrggbb`,
+  ограничения длины), автоподбор цвета из палитры, `reset_to_defaults()`.
+- Реестр — глобальный: при загрузке документа используется его текущее состояние,
+  а не список типов из запроса. Изменения применяются к новым документам;
+  чтобы пересобрать весь граф под новый набор — используется переизвлечение (§7.5).
 
 ---
 
@@ -596,7 +604,7 @@ class Triplet(BaseModel):
     predicate: str
     object: str
     object_type: str = "Concept"
-    context: str = ""            # фрагмент текста-источника
+    context: str = ""            # предложение-источник из чанка
     confidence: float = 1.0      # оценка достоверности
 
 class ExtractionResult(BaseModel):
@@ -607,8 +615,14 @@ class ExtractionResult(BaseModel):
 
 
 # models/document.py
-from pydantic import BaseModel
 from datetime import datetime
+from pydantic import BaseModel
+
+class Chunk(BaseModel):
+    index: int
+    text: str
+    start_char: int
+    end_char: int
 
 class Document(BaseModel):
     id: str
@@ -618,26 +632,27 @@ class Document(BaseModel):
     status: str                  # "pending" | "processing" | "completed" | "error"
     created_at: datetime
     triplets_extracted: int = 0
+    error_message: str | None = None
+    source_path: str | None = None      # путь к загруженному файлу
+    raw_text: str | None = None         # текст для документов из вставленного текста
+    language: str | None = None
+    used_type_names: list[str] | None = None  # снапшот реестра типов при загрузке
 
-class Chunk(BaseModel):
-    index: int
-    text: str
-    start_char: int
-    end_char: int
 
-
-# models/graph.py
+# models/graph.py — id узлов и рёбер строковые (elementId Neo4j)
 from pydantic import BaseModel
 
 class Node(BaseModel):
-    id: int
+    id: str
     name: str
     type: str
     connections: int
+    created_at: str | None = None
 
 class Edge(BaseModel):
-    source: int
-    target: int
+    id: str
+    source: str
+    target: str
     type: str
     context: str | None = None
 
@@ -665,92 +680,141 @@ class QAResponse(BaseModel):
     cypher_query: str            # для прозрачности
     raw_results: list[dict]      # сырые данные из Neo4j
     method: str                  # "text_to_cypher" | "fallback" | "error"
+
+
+# models/entity_type.py
+from pydantic import BaseModel
+
+class EntityType(BaseModel):
+    name: str
+    label: str
+    color: str
+    description: str = ""
+    visible: bool = True
+    is_default: bool = False
+    position: int = 0
+
+class EntityTypeCreate(BaseModel):
+    name: str
+    label: str | None = None
+    description: str | None = None
+    color: str | None = None
+
+class EntityTypeUpdate(BaseModel):
+    label: str | None = None
+    description: str | None = None
+    color: str | None = None
+    visible: bool | None = None
+    position: int | None = None
 ```
 
 ### 6.2. Модель данных Neo4j
 
 ```
 (:Entity {
-    name: String,        // уникальное каноническое имя
+    name: String,        // уникальное каноническое имя (MERGE по name)
     type: String,        // "Person", "Organization", "Technology", ...
-    aliases: [String],   // альтернативные написания
-    source: String,      // ID документа-источника (первого)
     created_at: DateTime
 })
+// + динамический label по типу: :Person, :Organization, ...
 
 -[:RELATES {
     type: String,        // нормализованный предикат
     source: String,      // ID документа-источника
-    context: String,     // фрагмент текста
+    context: String,     // предложение-источник из чанка (до 400 символов)
     confidence: Float,   // 0.0 - 1.0
     created_at: DateTime
 }]->
 ```
 
-**Индексы:**
+**Индексы** (создаются на старте, см. `GraphService.create_indexes`):
 ```cypher
--- Уникальность по имени
-CREATE CONSTRAINT entity_name_unique IF NOT EXISTS
-FOR (n:Entity) REQUIRE n.name IS UNIQUE;
-
--- Полнотекстовый поиск
+-- Полнотекстовый поиск по имени
 CREATE FULLTEXT INDEX entityNameIndex IF NOT EXISTS
 FOR (n:Entity) ON EACH [n.name];
 
+-- B-tree по имени (быстрый MERGE/поиск)
+CREATE INDEX entityNameIdx IF NOT EXISTS
+FOR (n:Entity) ON (n.name);
+
 -- Индекс по типу
-CREATE INDEX entity_type_idx IF NOT EXISTS
+CREATE INDEX entityTypeIdx IF NOT EXISTS
 FOR (n:Entity) ON (n.type);
 ```
+
+> Уникальность имени обеспечивается семантикой `MERGE (e:Entity {name: ...})`,
+> а не отдельным `CONSTRAINT`.
 
 ### 6.3. TypeScript типы (Frontend)
 
 ```typescript
 // types/index.ts
 
-interface Node {
-  id: number;
+export interface GraphNode {
+  id: string;            // elementId Neo4j
   name: string;
   type: string;
   connections: number;
+  created_at?: string | null;
 }
 
-interface Edge {
-  source: number;
-  target: number;
+export interface GraphEdge {
+  id: string;
+  source: string;
+  target: string;
   type: string;
   context?: string;
 }
 
-interface GraphData {
-  nodes: Node[];
-  edges: Edge[];
+export interface GraphData {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
 }
 
-interface Document {
+export interface Document {
   id: string;
   filename: string;
+  text_length: number;
+  num_chunks: number;
   status: "pending" | "processing" | "completed" | "error";
   created_at: string;
   triplets_extracted: number;
-  num_chunks: number;
-  progress?: number;  // 0-100
+  error_message?: string | null;
+  language?: string | null;
+  used_type_names?: string[] | null;
 }
 
-interface QAResponse {
+export interface QAResponse {
   answer: string;
   cypher_query: string;
   raw_results: Record<string, unknown>[];
   method: string;
 }
 
-interface GraphStats {
+export interface GraphStats {
   total_nodes: number;
   total_edges: number;
   types_distribution: { type: string; count: number }[];
   top_connected: { name: string; type: string; connections: number }[];
   documents_processed: number;
 }
+
+export interface EntityType {
+  name: string;
+  label: string;
+  color: string;
+  description: string;
+  visible: boolean;
+  is_default: boolean;
+  position: number;
+}
+
+export const ORPHAN_TYPE_COLOR = "#585b70";  // тип есть в графе, но не в реестре
+export const OTHER_TYPE_NAME = "Other";
 ```
+
+> Цвета типов больше не зашиты в `types/index.ts` константой — они приходят из
+> реестра типов (`EntityType.color`) и читаются через хук `useEntityTypes`.
 
 ---
 
@@ -870,31 +934,43 @@ class ChunkingService:
 
 ### 7.3. Этап 3: Извлечение триплетов через LLM
 
-#### 7.3.1. Промпт для извлечения (русский)
+Промпты (`prompts/extraction_ru.txt` / `extraction_en.txt`) — детальные:
+помимо базовых правил они содержат раздел «обязательно извлекать», примеры
+правильных и **неправильных** триплетов (объект-описание вместо сущности),
+примеры извлечения из перечислений и из одного предложения. Шаблон содержит
+плейсхолдеры, которые `ExtractionService` подставляет из реестра типов:
+`{text}`, `{entity_types}` (список имён типов), `{type_definitions}` (строки
+`name — description`) и `{example_type}`.
+
+#### 7.3.1. Промпт для извлечения (русский, сокращённо)
 
 ```
 # prompts/extraction_ru.txt
 
-Ты — система извлечения знаний. Твоя задача — прочитать текст и извлечь из него все значимые сущности и отношения между ними.
+Ты — система извлечения знаний. Твоя задача — прочитать текст и извлечь из него
+наиболее значимые сущности и отношения между ними.
 
 Правила:
 1. Извлекай только факты, явно присутствующие в тексте. НЕ додумывай.
-2. Каждый триплет: (субъект, предикат, объект).
-3. Используй КРАТКИЕ имена сущностей (не повторяй определения).
-4. Нормализуй имена: "ВШЭ", "Высшая школа экономики", "НИУ ВШЭ" → "НИУ ВШЭ".
-5. Предикаты записывай глаголами или краткими фразами: "разработал", "использует", "основан_в", "является_частью".
-6. Типизируй каждую сущность одним из типов: Person, Organization, Technology, Concept, Location, Date, Event, Product.
+2. Каждый триплет: (субъект, предикат, объект). Субъект — кто/что действует.
+   НЕ инвертируй направление.
+3. Имя сущности — собственное имя, аббревиатура или термин из 1–3 слов.
+4. Нормализуй имена; для организаций используй наиболее общую форму.
+5. Предикаты — глаголы или краткие фразы.
+... (раздел «обязательно извлекать», примеры правильных/неправильных триплетов,
+    примеры извлечения из перечислений) ...
+
+Типизируй каждую сущность одним из типов: {entity_types}.
+Краткие определения типов:
+{type_definitions}
+Если ни один тип объективно не подходит — используй Other.
 
 Формат ответа (JSON):
 {
   "triplets": [
-    {
-      "subject": "Google",
-      "subject_type": "Organization",
-      "predicate": "разработала",
-      "object": "BERT",
-      "object_type": "Technology"
-    }
+    { "subject": "имя_сущности", "subject_type": "{example_type}",
+      "predicate": "отношение",
+      "object": "имя_другой_сущности", "object_type": "{example_type}" }
   ]
 }
 
@@ -904,35 +980,8 @@ class ChunkingService:
 
 #### 7.3.2. Промпт для извлечения (английский)
 
-```
-# prompts/extraction_en.txt
-
-You are a knowledge extraction system. Read the text and extract all significant entities and relationships between them.
-
-Rules:
-1. Extract only facts explicitly present in the text. Do NOT infer.
-2. Each triplet: (subject, predicate, object).
-3. Use SHORT entity names (no repeating definitions).
-4. Normalize names: use the most common form.
-5. Write predicates as verbs or short phrases: "developed", "uses", "founded_in", "part_of".
-6. Classify each entity as one of: Person, Organization, Technology, Concept, Location, Date, Event, Product.
-
-Response format (JSON):
-{
-  "triplets": [
-    {
-      "subject": "Google",
-      "subject_type": "Organization",
-      "predicate": "developed",
-      "object": "BERT",
-      "object_type": "Technology"
-    }
-  ]
-}
-
-Text to analyze:
-{text}
-```
+`prompts/extraction_en.txt` — точная калька RU-промпта на английском, с теми же
+плейсхолдерами `{text}`, `{entity_types}`, `{type_definitions}`, `{example_type}`.
 
 #### 7.3.3. Сервис извлечения
 
@@ -940,108 +989,107 @@ Text to analyze:
 # services/extraction_service.py
 
 import json
+from models.entity_type import EntityType
 from models.triplet import Triplet, ExtractionResult
+from services.entity_type_service import OTHER_TYPE_NAME, get_default_types
 from services.llm_client import LLMClient
-from config import settings
+from settings import settings
 
 class ExtractionService:
-    
+
     def __init__(self, llm: LLMClient):
         self.llm = llm
-        self.prompt_ru = open("prompts/extraction_ru.txt").read()
-        self.prompt_en = open("prompts/extraction_en.txt").read()
-    
+        self.prompt_ru = (PROMPTS_DIR / "extraction_ru.txt").read_text()
+        self.prompt_en = (PROMPTS_DIR / "extraction_en.txt").read_text()
+
     async def extract_from_chunk(
         self,
         chunk_text: str,
         chunk_index: int,
         total_chunks: int,
         language: str = "ru",
+        entity_types: list[EntityType] | None = None,
     ) -> ExtractionResult:
         """Извлечение триплетов из одного чанка."""
-        
+        # Реестр типов (+ всегда добавляется Other) подставляется в промпт.
+        types = _ensure_other(entity_types or get_default_types())
+        allowed_names = {t.name for t in types}
+
         template = self.prompt_ru if language == "ru" else self.prompt_en
-        prompt = template.replace("{text}", chunk_text)
-        
+        prompt = (
+            template
+            .replace("{text}", chunk_text)
+            .replace("{entity_types}", ", ".join(t.name for t in types))
+            .replace("{type_definitions}", _build_definitions(types))
+            .replace("{example_type}", _pick_example_type(types))
+        )
+
         for attempt in range(settings.max_retries):
             try:
                 raw_response = await self.llm.generate(
                     prompt=prompt,
                     temperature=settings.extraction_temperature,
-                    format="json",
+                    response_format="json",
                 )
-                
                 data = json.loads(raw_response)
-                triplets = [
-                    Triplet(
-                        subject=t["subject"].strip(),
-                        subject_type=t.get("subject_type", "Concept"),
+                triplets = []
+                for t in data.get("triplets", []):
+                    if not (t.get("subject") and t.get("predicate") and t.get("object")):
+                        continue
+                    subj, obj = t["subject"].strip(), t["object"].strip()
+                    subj_type = (t.get("subject_type") or OTHER_TYPE_NAME).strip()
+                    obj_type = (t.get("object_type") or OTHER_TYPE_NAME).strip()
+                    # Тип, которого нет в реестре, заменяется на Other.
+                    if subj_type not in allowed_names: subj_type = OTHER_TYPE_NAME
+                    if obj_type not in allowed_names: obj_type = OTHER_TYPE_NAME
+                    triplets.append(Triplet(
+                        subject=subj, subject_type=subj_type,
                         predicate=t["predicate"].strip(),
-                        object=t["object"].strip(),
-                        object_type=t.get("object_type", "Concept"),
-                        context=chunk_text[:200],  # первые 200 символов как контекст
-                    )
-                    for t in data.get("triplets", [])
-                    if t.get("subject") and t.get("predicate") and t.get("object")
-                ]
-                
+                        object=obj, object_type=obj_type,
+                        # context — предложение чанка, где встретились субъект и объект
+                        context=_find_context(chunk_text, subj, obj),
+                    ))
                 return ExtractionResult(
-                    triplets=triplets,
-                    chunk_index=chunk_index,
-                    total_chunks=total_chunks,
-                    raw_text=chunk_text,
+                    triplets=triplets, chunk_index=chunk_index,
+                    total_chunks=total_chunks, raw_text=chunk_text,
                 )
-            
-            except (json.JSONDecodeError, KeyError) as e:
+            except (json.JSONDecodeError, KeyError):
                 if attempt == settings.max_retries - 1:
-                    # Возвращаем пустой результат вместо ошибки
                     return ExtractionResult(
-                        triplets=[],
-                        chunk_index=chunk_index,
-                        total_chunks=total_chunks,
-                        raw_text=chunk_text,
+                        triplets=[], chunk_index=chunk_index,
+                        total_chunks=total_chunks, raw_text=chunk_text,
                     )
                 continue  # Повторная попытка
 ```
 
+Отличия от исходного ТЗ: в промпт подставляется актуальный **реестр типов**
+(с определениями); типы из ответа LLM валидируются по реестру и при несовпадении
+заменяются на `Other`; `context` — это предложение чанка, содержащее субъект и
+объект (а не первые N символов чанка).
+
 ### 7.4. Этап 4: Нормализация и дедупликация
+
+Словари алиасов вынесены из кода в `backend/config/aliases.json`
+(`entity_aliases` и `predicate_aliases`) и загружаются в конструкторе.
 
 ```python
 # services/normalization_service.py
 
+import json
 from difflib import SequenceMatcher
+from pathlib import Path
 from models.triplet import Triplet
-from config import settings
+from settings import settings
+
+ALIASES_PATH = Path(__file__).parent.parent / "config" / "aliases.json"
 
 class NormalizationService:
-    
-    # Словарь известных сокращений (расширяемый)
-    ALIASES = {
-        "вшэ": "НИУ ВШЭ",
-        "высшая школа экономики": "НИУ ВШЭ",
-        "ниу вшэ": "НИУ ВШЭ",
-        "гугл": "Google",
-        "мс": "Microsoft",
-        "майкрософт": "Microsoft",
-    }
-    
-    # Синонимы предикатов
-    PREDICATE_ALIASES = {
-        "создал": "разработал",
-        "создала": "разработала",
-        "написал": "разработал",
-        "написала": "разработала",
-        "изобрёл": "разработал",
-        "придумал": "разработал",
-        "основал": "основал",
-        "основала": "основала",
-        "developed": "developed",
-        "created": "developed",
-        "invented": "developed",
-        "built": "developed",
-        "wrote": "developed",
-    }
-    
+
+    def __init__(self):
+        data = json.loads(ALIASES_PATH.read_text())
+        self.entity_aliases: dict[str, str] = data.get("entity_aliases", {})
+        self.predicate_aliases: dict[str, str] = data.get("predicate_aliases", {})
+
     def normalize_triplets(self, triplets: list[Triplet]) -> list[Triplet]:
         """Полный цикл нормализации."""
         triplets = [self._normalize_entity_names(t) for t in triplets]
@@ -1051,20 +1099,15 @@ class NormalizationService:
         return triplets
     
     def _normalize_entity_names(self, triplet: Triplet) -> Triplet:
-        """Нормализация имён сущностей."""
-        subject = self.ALIASES.get(triplet.subject.lower(), triplet.subject)
-        obj = self.ALIASES.get(triplet.object.lower(), triplet.object)
-        
-        # Капитализация
-        subject = subject.strip()
-        obj = obj.strip()
-        
+        """Нормализация имён сущностей по entity_aliases."""
+        subject = self.entity_aliases.get(triplet.subject.lower(), triplet.subject).strip()
+        obj = self.entity_aliases.get(triplet.object.lower(), triplet.object).strip()
         return triplet.model_copy(update={"subject": subject, "object": obj})
-    
+
     def _normalize_predicate(self, triplet: Triplet) -> Triplet:
-        """Нормализация предикатов."""
+        """Нормализация предикатов по predicate_aliases."""
         pred = triplet.predicate.lower().strip()
-        normalized = self.PREDICATE_ALIASES.get(pred, pred)
+        normalized = self.predicate_aliases.get(pred, pred)
         return triplet.model_copy(update={"predicate": normalized})
     
     def _deduplicate(self, triplets: list[Triplet]) -> list[Triplet]:
@@ -1118,7 +1161,31 @@ class NormalizationService:
         return self._deduplicate(result)
 ```
 
+> В реальной реализации решение о слиянии принимает `_should_merge`: помимо
+> порога `SequenceMatcher` есть спец-правило для пар `Organization`/`Organization` —
+> совпадение первого слова длиной ≥ 3 символа (например, «Yandex Self-Driving» →
+> «Yandex»). Каноническим выбирается более длинное имя.
+
 **Компромисс**: для MVP используем строковое сходство (SequenceMatcher). В будущем можно добавить сравнение эмбеддингов или повторный вызов LLM для сложных случаев кореференции.
+
+### 7.5. Оркестрация и переизвлечение
+
+Этапы 1–4 (для одного документа) связывает `ExtractionPipeline.run`: чанкинг →
+для каждого чанка извлечение → нормализация → запись в Neo4j; прогресс пишется в
+`ExtractionPipeline.jobs[doc_id]` (`ExtractionJobState`, живёт в памяти процесса)
+и отдаётся фронтенду по SSE. Документ переводится в статусы
+`pending → processing → completed`/`error` (статус и `error_message`
+сохраняются в SQLite). Чанки обрабатываются **последовательно**.
+
+`ExtractionPipeline.re_extract_all` пересобирает **весь граф** под текущий реестр
+типов: очищает граф (`MATCH (n) DETACH DELETE n`), затем для каждого документа,
+у которого доступен источник (`raw_text` или `source_path`), заново берёт текст
+и прогоняет `run(...)` с актуальными типами, обновляя `used_type_names`.
+Прогресс — `ReExtractJobState` (текущий документ, чанк, всего документов,
+триплетов, список ошибок), также по SSE. Повторный запуск во время работы
+отклоняется (`409`). Эндпоинт `GET /api/graph/types-snapshot` отдельно сверяет
+`used_type_names` завершённых документов с текущим реестром и помечает
+«устаревшие» документы — UI показывает по нему предупреждение.
 
 ---
 
@@ -1135,19 +1202,20 @@ class NormalizationService:
 └────────┬──────────┘
          │
          ▼
-┌───────────────────┐     ┌──────────────────┐
-│  Text-to-Cypher   │────►│  Валидация Cypher │
-│  (LLM генерирует  │     │  (синтаксис)      │
-│   Cypher-запрос)  │     └────────┬─────────┘
-└───────────────────┘              │
-                                   │ Валидный?
+┌───────────────────┐     ┌──────────────────────┐
+│  Text-to-Cypher   │────►│  _validate_readonly  │
+│  (LLM генерирует  │     │  (чёрный список      │
+│   Cypher-запрос)  │     │   ключевых слов)     │
+└───────────────────┘     └────────┬─────────────┘
+                                   │ ok / выполнился без ошибок
+                                   │ и вернул непустой результат?
                           ┌────────┴─────────┐
                           │ Да               │ Нет
                           ▼                  ▼
                    ┌──────────┐     ┌──────────────┐
                    │ Выполнить│     │  Fallback:   │
-                   │ в Neo4j  │     │  шаблонный   │
-                   └────┬─────┘     │  запрос      │
+                   │ в Neo4j  │     │  эвристики + │
+                   └────┬─────┘     │  шаблоны     │
                         │           └──────┬───────┘
                         │                  │
                         ▼                  ▼
@@ -1160,61 +1228,63 @@ class NormalizationService:
                         Ответ + Cypher
 ```
 
+> На практике fallback срабатывает не только при ошибке валидации/выполнения, но и
+> когда сгенерированный Cypher отработал, но вернул пустой результат.
+
 ### 8.2. Промпт Text-to-Cypher
 
+`prompts/text_to_cypher.txt` (в репозитории — на английском; смысл приведён ниже).
+Промпт описывает схему графа (`:Entity {name, type}`, `:RELATES {type}`), правила
+(`MATCH`, `toLower()` для регистронезависимого сравнения, `CONTAINS` для нечёткого
+поиска, `LIMIT 25`, «верни ТОЛЬКО Cypher») и несколько примеров «вопрос → Cypher».
+Единственный плейсхолдер — `{question}`. Запрос к LLM идёт в текстовом режиме
+(`temperature=0.0`); из ответа срезаются markdown-ограждения ```` ``` ````.
+
 ```
-# prompts/text_to_cypher.txt
+You are an assistant that converts natural language questions into Cypher queries for Neo4j.
 
-Ты — ассистент, который преобразует вопросы на естественном языке в Cypher-запросы к Neo4j.
+Graph schema:
+- Nodes have label :Entity and properties: name (String), type (String)
+- Edges have type :RELATES and property type (String)
 
-Схема графа:
-- Узлы имеют label :Entity и свойства: name (String), type (String)
-- Типы сущностей: Person, Organization, Technology, Concept, Location, Date, Event, Product
-- Рёбра имеют тип :RELATES и свойство type (String) — тип отношения
+Rules: use MATCH; toLower() for case-insensitive comparison; CONTAINS for fuzzy
+matching; always RETURN meaningful fields; add LIMIT 25; return ONLY the Cypher query.
 
-Правила:
-1. Используй MATCH для поиска.
-2. Для поиска по имени используй toLower() для регистронезависимого сравнения.
-3. Для нечёткого поиска используй CONTAINS.
-4. Всегда возвращай осмысленные поля через RETURN.
-5. Добавляй LIMIT 25, если не указано иное.
-6. Верни ТОЛЬКО Cypher-запрос, ничего больше.
+Examples:
+Question: "What did Google develop?"
+Cypher: MATCH (s:Entity)-[r:RELATES]->(o:Entity) WHERE toLower(s.name) CONTAINS 'google' AND toLower(r.type) CONTAINS 'develop' RETURN s.name AS subject, r.type AS relation, o.name AS object LIMIT 25
+...
 
-Примеры:
-
-Вопрос: "Что разработала компания Google?"
-Cypher: MATCH (s:Entity)-[r:RELATES]->(o:Entity) WHERE toLower(s.name) CONTAINS 'google' AND toLower(r.type) CONTAINS 'разработал' RETURN s.name AS subject, r.type AS relation, o.name AS object LIMIT 25
-
-Вопрос: "Какие технологии связаны с машинным обучением?"
-Cypher: MATCH (s:Entity)-[r:RELATES]-(o:Entity) WHERE (toLower(s.name) CONTAINS 'машинн' OR toLower(o.name) CONTAINS 'машинн') RETURN s.name AS entity1, r.type AS relation, o.name AS entity2 LIMIT 25
-
-Вопрос: "Покажи все организации"
-Cypher: MATCH (n:Entity) WHERE n.type = 'Organization' RETURN n.name AS name, n.type AS type LIMIT 25
-
-Вопрос: {question}
+Question: {question}
 Cypher:
 ```
 
 ### 8.3. Промпт формирования ответа
 
+`prompts/answer_generation.txt` (в репозитории — на английском). Плейсхолдеры
+`{question}` и `{results}` (первые 20 строк результата в JSON). Смысл правил:
+
 ```
-# prompts/answer_generation.txt
+Based on the knowledge graph data, formulate a clear answer to the user's question.
 
-На основе данных из графа знаний сформулируй понятный ответ на вопрос пользователя.
-
-Вопрос: {question}
-
-Данные из графа (результат Cypher-запроса):
+Question: {question}
+Data from the graph (Cypher query result):
 {results}
 
-Правила:
-1. Отвечай на том же языке, на котором задан вопрос.
-2. Если данных нет или они нерелевантны, скажи об этом честно.
-3. Ответ должен быть кратким и информативным.
-4. Перечисляй конкретные факты из данных.
+Rules:
+1. Answer in the same language as the question.
+2. If there is no relevant data, say so honestly.
+3. Be concise and informative.
+4. List specific facts from the data.
 ```
 
 ### 8.4. Fallback-механизм
+
+`QAService._fallback_query` сначала пробует эвристики по ключевым словам вопроса
+(`person/people/человек/люди → Person`, `organization/company/организаци/компани →
+Organization`, `technology/технолог → Technology`) с шаблоном `all_of_type`; если
+не сработало — берёт из вопроса слова длиной > 3 символов и для каждого пробует
+`connections_of`. Шаблоны:
 
 ```python
 # Шаблонные запросы для типичных паттернов вопросов
@@ -1250,10 +1320,11 @@ FALLBACK_TEMPLATES = {
 
 | Метод | Endpoint | Описание |
 |-------|----------|----------|
-| `POST` | `/api/documents` | Загрузка документа (multipart/form-data) |
+| `POST` | `/api/documents` | Загрузка файла (multipart/form-data) |
+| `POST` | `/api/documents/text` | Загрузка вставленного текста (JSON) |
 | `GET` | `/api/documents` | Список загруженных документов |
 | `GET` | `/api/documents/{id}` | Детали конкретного документа |
-| `DELETE` | `/api/documents/{id}` | Удаление документа (и связанных триплетов) |
+| `DELETE` | `/api/documents/{id}` | Удаление документа, его рёбер в Neo4j, осиротевших узлов и файла |
 
 #### POST /api/documents
 
@@ -1261,23 +1332,26 @@ FALLBACK_TEMPLATES = {
 Request: multipart/form-data
   - file: File (PDF, DOCX, TXT)
   - language: string ("ru" | "en" | "auto"), default "auto"
-  - entity_types: string[] (optional, override default types)
 
 Response 202:
 {
   "id": "doc_abc123",
   "filename": "article.pdf",
-  "status": "processing",
-  "num_chunks": 12
+  "status": "processing"
 }
 ```
+
+> Набор типов сущностей в запросе **не передаётся** — используется текущий
+> глобальный реестр (§9.5), снапшот которого сохраняется в документе.
+> `POST /api/documents/text` принимает JSON `{text, language?}` и создаёт
+> «документ» с filename `[pasted text]`. В ответах списка/деталей поля
+> `raw_text` и `source_path` исключены.
 
 ### 9.2. Извлечение
 
 | Метод | Endpoint | Описание |
 |-------|----------|----------|
-| `GET` | `/api/extraction/{doc_id}/status` | Статус извлечения (SSE) |
-| `GET` | `/api/extraction/{doc_id}/results` | Результаты извлечения |
+| `GET` | `/api/extraction/{doc_id}/status` | Прогресс извлечения документа (SSE) |
 
 #### GET /api/extraction/{doc_id}/status (Server-Sent Events)
 
@@ -1285,7 +1359,7 @@ Response 202:
 event: progress
 data: {"chunk": 3, "total": 12, "triplets_so_far": 27}
 
-event: progress  
+event: progress
 data: {"chunk": 4, "total": 12, "triplets_so_far": 35}
 
 ...
@@ -1298,30 +1372,39 @@ data: {"total_triplets": 89, "total_chunks": 12}
 
 | Метод | Endpoint | Описание |
 |-------|----------|----------|
-| `GET` | `/api/graph` | Все узлы и рёбра (с лимитом) |
+| `GET` | `/api/graph` | Узлы и рёбра (с лимитом и фильтром по типам) |
 | `GET` | `/api/graph/stats` | Статистика графа |
-| `GET` | `/api/graph/search?q=...` | Поиск узлов |
-| `GET` | `/api/graph/node/{name}` | Окружение узла |
-| `GET` | `/api/graph/node/{name}/neighbors?depth=1` | Соседи на расстоянии depth |
+| `DELETE` | `/api/graph/clear` | Полная очистка графа + удаление всех документов |
+| `GET` | `/api/graph/search?q=...` | Полнотекстовый поиск узлов |
+| `GET` | `/api/graph/node/{name}/neighbors?depth=1` | Соседство узла (узлы + рёбра), depth 1..3 |
+| `DELETE` | `/api/graph/node/{name}` | Удалить узел и его рёбра (404, если не найден) |
+| `GET` | `/api/graph/types-snapshot` | Проверка согласованности `used_type_names` с реестром |
+| `POST` | `/api/graph/re-extract` | Запуск переизвлечения всего графа (202; 409, если уже идёт) |
+| `GET` | `/api/graph/re-extract/status` | Прогресс переизвлечения (SSE) |
 
 #### GET /api/graph
 
 ```
 Query params:
-  - limit: int (default 500)
+  - limit: int (default 500, 1..2000)
   - types: string[] (фильтр по типам)
 
 Response 200:
 {
   "nodes": [
-    {"id": 1, "name": "Google", "type": "Organization", "connections": 15},
-    {"id": 2, "name": "BERT", "type": "Technology", "connections": 8}
+    {"id": "4:abc:1", "name": "Google", "type": "Organization",
+     "connections": 15, "created_at": "2026-05-14T..."},
+    {"id": "4:abc:2", "name": "BERT", "type": "Technology",
+     "connections": 8, "created_at": "2026-05-14T..."}
   ],
   "edges": [
-    {"source": 1, "target": 2, "type": "разработала", "context": "..."}
+    {"id": "5:abc:0", "source": "4:abc:1", "target": "4:abc:2",
+     "type": "разработала", "context": "..."}
   ]
 }
 ```
+
+> `id`, `source`, `target` — строковые `elementId()` Neo4j.
 
 ### 9.4. QA
 
@@ -1347,6 +1430,33 @@ Response 200:
 }
 ```
 
+### 9.5. Типы сущностей
+
+Глобальный реестр типов сущностей (хранится в SQLite, см. §5.5).
+
+| Метод | Endpoint | Описание |
+|-------|----------|----------|
+| `GET` | `/api/entity-types` | Текущий реестр типов |
+| `GET` | `/api/entity-types/defaults` | Стандартный набор типов (справочно, без обращения к БД) |
+| `POST` | `/api/entity-types` | Создать тип `{name, label?, description?, color?}` → 201 |
+| `PATCH` | `/api/entity-types/{name}` | Частичное обновление `{label?, description?, color?, visible?, position?}` |
+| `DELETE` | `/api/entity-types/{name}` | Удалить тип из реестра (`Other` удалить нельзя) |
+| `POST` | `/api/entity-types/reset` | Сбросить реестр к стандартному набору |
+
+#### EntityType (объект)
+
+```json
+{
+  "name": "Drug",
+  "label": "Препарат",
+  "color": "#89b4fa",
+  "description": "лекарственное средство",
+  "visible": true,
+  "is_default": false,
+  "position": 8
+}
+```
+
 ---
 
 ## 10. Веб-интерфейс
@@ -1355,67 +1465,67 @@ Response 200:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  KG Builder                              [Загрузить документ]│
+│  Anagraph        [текст для анализа...] [Анализировать] [Файл]│
 ├──────────────┬───────────────────────────────────────────────┤
-│              │                                               │
-│  ФИЛЬТРЫ     │          ВИЗУАЛИЗАЦИЯ ГРАФА                   │
-│              │          (vis.js canvas)                       │
-│  □ Person    │                                               │
-│  □ Org       │         ○──────○                              │
-│  □ Tech      │        /        \                             │
-│  □ Concept   │       ○──────────○                            │
-│  □ Location  │        \        /                             │
-│  □ Date      │         ○──────○                              │
-│              │                                               │
-│  ─────────── │                                               │
-│  ПОИСК       │                                               │
-│  [________]  │                                               │
-│              │                                               │
-│  ─────────── │───────────────────────────────────────────────│
-│  СТАТИСТИКА  │  ВОПРОС К ГРАФУ                               │
-│              │  [Введите вопрос...                ] [Спросить]│
-│  Узлов: 156  │                                               │
-│  Рёбер: 289  │  Ответ: Компания Google разработала BERT,     │
-│  Типов: 6    │  TensorFlow и Transformer.                    │
-│              │  Cypher: MATCH (s)-[r]->(o) WHERE ...         │
+│ ТИПЫ СУЩНОСТЕЙ│         ВИЗУАЛИЗАЦИЯ ГРАФА                    │
+│  ●Персона ... │         (vis.js canvas)                       │
+│  [+ Добавить] │                                               │
+│ ─────────────│         ○──────○                              │
+│  ФИЛЬТР       │        /        \                             │
+│  ☑ Персона    │       ○──────────○                            │
+│  ☑ Технология │        \        /                             │
+│ ─────────────│         ○──────○                              │
+│  ПОИСК        │                                               │
+│  [________]   │                                               │
+│ ─────────────│                                               │
+│  ДОКУМЕНТЫ    ├───────────────────────────────────────────────│
+│ ─────────────│  ВОПРОС К ГРАФУ                                │
+│  СТАТИСТИКА   │  [Задайте вопрос...                ] [Спросить]│
+│  Узлов: 156   │  ▶ История (3)                                │
+│  Связей: 289  │  Ответ: Компания Google разработала BERT...   │
+│ [Очистить граф]  [Показать Cypher (text_to_cypher)]           │
 ├──────────────┴───────────────────────────────────────────────┤
-│  ДЕТАЛИ УЗЛА: Google (Organization) — 15 связей              │
-│  → разработала → BERT  │  → основана_в → Mountain View       │
+│  ● Google (Организация) — 15 связей  → разработала → BERT ... │
+│                                            [Удалить]    [✕]   │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 ### 10.2. Цветовая схема узлов
 
-| Тип | Цвет | Hex |
-|-----|------|-----|
-| Person | Синий | `#4A90D9` |
-| Organization | Зелёный | `#27AE60` |
-| Technology | Оранжевый | `#F39C12` |
-| Concept | Фиолетовый | `#8E44AD` |
-| Location | Красный | `#E74C3C` |
-| Date | Серый | `#95A5A6` |
-| Event | Бирюзовый | `#1ABC9C` |
-| Product | Розовый | `#E91E63` |
+Цвета **не зашиты в код** — каждый тип сущности в реестре (§5.5, §9.5) хранит
+свой `color` (hex). UI читает цвета через хук `useEntityTypes` (`getColor`).
+Стандартный набор использует Catppuccin-подобную палитру (`#89b4fa` Person,
+`#a6e3a1` Organization, `#fab387` Technology, `#cba6f7` Concept и т.д.).
+Для типов, которых нет в реестре, но которые встречаются в графе, используется
+`ORPHAN_TYPE_COLOR` (`#585b70`).
 
 ### 10.3. Ключевые компоненты
 
 #### GraphViewer.tsx
-- Использует `vis-network` из vis.js
-- Физическая симуляция: `barnesHut` (для производительности до ~1000 узлов)
-- При клике на узел: подсвечиваются соседние узлы и рёбра, открывается панель деталей
-- При клике на ребро: показывается тип отношения и контекст
-- Двойной клик: центрирование на узле
+- Использует `vis-network` из vis.js, физическая симуляция `barnesHut`.
+- Цвета узлов — из реестра типов; видимость фильтруется на клиенте по флагу `visible` типа.
+- «Свежие» узлы (`created_at` < 30 с) подсвечиваются оранжевой обводкой.
+- Клик по узлу — подсветка соседства + панель деталей; клик по ребру — tooltip с типом и `context`; двойной клик — фокус-зум; Esc/клик в пустоту — сброс.
 
 #### DocumentUpload.tsx
-- Drag-and-drop зона + кнопка выбора файла
-- Ограничение: PDF, DOCX, TXT, до 10 МБ
-- После загрузки: progress bar с SSE-обновлениями
-- По завершении: автоматическое обновление графа
+- Поле вставки текста + кнопка «Анализировать» + кнопка «Файл» + drag-and-drop на всё окно.
+- Ограничение на клиенте: PDF, DOCX, TXT, до 10 МБ.
+- После загрузки — progress bar с SSE-обновлениями; по завершении — toast и обновление графа.
+
+#### EntityTypesPanel.tsx
+- CRUD реестра типов: чипы типов (клик — форма редактирования label/описания/цвета), «+ Добавить тип», удаление, «↺ Сбросить».
+- Кнопка «↻ Переизвлечь весь граф» с прогресс-баром по SSE; предупреждение, если есть документы со старым набором типов (`types-snapshot`).
+
+#### FilterPanel.tsx
+- Чекбоксы по типам реестра; переключение `visible` сохраняется на бэкенд (`PATCH /api/entity-types/{name}`).
+- Блок «orphan»-типов: типы, что есть в графе, но не в реестре, с кнопкой добавить их в реестр.
+
+#### NodeDetails.tsx
+- Footer выбранного узла: имя, тип, число связей, первые 8 связей; кнопка «Удалить» (удаляет узел и рёбра, с подтверждением).
 
 #### QAPanel.tsx
-- Текстовое поле + кнопка "Спросить"
-- Отображение ответа, Cypher-запроса (в collapsible), raw-данных
-- История вопросов в рамках сессии (localStorage)
+- Текстовое поле + «Спросить»; отображение ответа и Cypher-запроса (collapsible) с пометкой метода.
+- История вопросов в `localStorage` (последние 10), сворачиваемая.
 
 ---
 
@@ -1425,13 +1535,20 @@ Response 200:
 
 ```env
 # Neo4j
-NEO4J_URI=bolt://neo4j:7687
+NEO4J_URI=bolt://localhost:7687     # в docker-compose перебивается на bolt://neo4j:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=changeme
 
-# Ollama
-OLLAMA_BASE_URL=http://ollama:11434
-OLLAMA_MODEL=mistral:7b-instruct
+# LLM provider: "groq" (облако) или "ollama" (локально)
+LLM_PROVIDER=groq
+
+# Groq
+GROQ_API_KEY=your-groq-api-key-here
+GROQ_MODEL=llama-3.3-70b-versatile
+
+# Ollama (для локального backend; в docker-compose перебивается на http://ollama:11434/v1)
+OLLAMA_BASE_URL=http://localhost:11434/v1
+OLLAMA_MODEL=llama3.1:8b
 
 # Extraction
 CHUNK_SIZE=1200
@@ -1441,26 +1558,27 @@ EXTRACTION_TEMPERATURE=0.1
 
 # QA
 QA_TEMPERATURE=0.0
+QA_MAX_TOKENS=1024
 CYPHER_FALLBACK_ENABLED=true
 
 # Normalization
 SIMILARITY_THRESHOLD=0.85
 
-# Frontend
-VITE_API_URL=http://localhost:8000
+# CORS (JSON-список)
+ALLOWED_ORIGINS=["http://localhost:3000"]
 ```
+
+Дополнительно в `settings.py` есть ключи с дефолтами, которые обычно не выносят в
+`.env`: `GROQ_BASE_URL` и `DATABASE_PATH` (`data/anagraph.db`).
 
 ### 11.2. Конфигурация типов сущностей
 
-Пользователь может указать свои типы сущностей при загрузке документа:
-
-```json
-{
-  "entity_types": ["Drug", "Disease", "Gene", "Protein", "Symptom"]
-}
-```
-
-Это модифицирует промпт, заменяя стандартный список типов на пользовательский. Позволяет адаптировать систему под конкретный домен без изменения кода.
+Типы сущностей **не задаются в `.env`** и **не передаются при загрузке документа**.
+Это персистентный глобальный реестр в SQLite, который пользователь редактирует
+через UI (панель «Типы сущностей») или API (`/api/entity-types`, §9.5). Стандартный
+набор сидится при первом старте; для адаптации под домен (например, `Drug,
+Disease, Gene`) типы добавляются/редактируются в реестре. Чтобы пересобрать уже
+построенный граф под изменённый набор — используется переизвлечение (§7.5).
 
 ---
 
@@ -1469,161 +1587,134 @@ VITE_API_URL=http://localhost:8000
 ### 12.1. Docker Compose
 
 ```yaml
-# docker-compose.yml
-
-version: "3.9"
+# docker-compose.yml (сокращённо)
 
 services:
   neo4j:
     image: neo4j:5-community
-    ports:
-      - "7474:7474"    # Browser
-      - "7687:7687"    # Bolt
+    ports: ["7474:7474", "7687:7687"]
     environment:
       NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-changeme}
       NEO4J_PLUGINS: '["apoc"]'
-    volumes:
-      - neo4j_data:/data
-    healthcheck:
-      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "${NEO4J_PASSWORD:-changeme}", "RETURN 1"]
-      interval: 10s
-      retries: 5
+    volumes: ["neo4j_data:/data"]
+    healthcheck: { test: ["CMD", "cypher-shell", ...], interval: 10s, retries: 5 }
 
+  # Опциональные сервисы — поднимаются только с профилем "ollama"
   ollama:
     image: ollama/ollama:latest
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    # При первом запуске нужно загрузить модель:
-    # docker exec -it kg-builder-ollama-1 ollama pull mistral:7b-instruct
+    profiles: ["ollama"]
+    ports: ["11434:11434"]
+    volumes: ["ollama_data:/root/.ollama"]
+  ollama-pull:                       # одноразовый: тянет OLLAMA_MODEL
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    depends_on: { ollama: { condition: service_healthy } }
+    command: ['ollama pull "$OLLAMA_MODEL"']
 
   backend:
     build: ./backend
-    ports:
-      - "8000:8000"
+    ports: ["8000:8000"]
     env_file: .env
-    depends_on:
-      neo4j:
-        condition: service_healthy
-      ollama:
-        condition: service_started
+    environment:                     # перебивают значения из .env для контейнера
+      NEO4J_URI: bolt://neo4j:7687
+      OLLAMA_BASE_URL: http://ollama:11434/v1
+    depends_on: { neo4j: { condition: service_healthy } }
     volumes:
-      - uploads:/app/uploads
+      - uploads:/app/uploads         # исходные файлы документов
+      - app_data:/app/data           # SQLite-база
 
   frontend:
-    build: ./frontend
-    ports:
-      - "3000:3000"
-    environment:
-      VITE_API_URL: http://localhost:8000
-    depends_on:
-      - backend
+    build: ./frontend                # nginx alpine, проксирует /api → backend:8000
+    ports: ["3000:3000"]
+    depends_on: [backend]
 
 volumes:
   neo4j_data:
-  ollama_data:
   uploads:
+  app_data:
+  ollama_data:
 ```
+
+> По умолчанию `docker compose up` поднимает только neo4j + backend + frontend
+> (рассчитано на `LLM_PROVIDER=groq`). Локальная Ollama — под профилем:
+> `docker compose --profile ollama up` дополнительно поднимает `ollama` и
+> одноразовый `ollama-pull`, автоматически скачивающий модель.
 
 ### 12.2. Первый запуск
 
 ```bash
-# 1. Клонировать репозиторий
-git clone https://github.com/your-repo/kg-builder.git
-cd kg-builder
-
-# 2. Скопировать конфигурацию
+# 1. Клонировать репозиторий и подготовить конфигурацию
+git clone <repo-url> anagraph && cd anagraph
 cp .env.example .env
-# Отредактировать .env при необходимости
+# для Groq: вписать GROQ_API_KEY; для локального LLM: LLM_PROVIDER=ollama
 
-# 3. Запустить
-docker compose up -d
+# 2. Запустить
+docker compose up -d --build
+# либо с локальной Ollama (модель скачается автоматически):
+# docker compose --profile ollama up -d --build
 
-# 4. Загрузить модель LLM (один раз)
-docker exec -it kg-builder-ollama-1 ollama pull mistral:7b-instruct
-
-# 5. Открыть в браузере
-# Frontend: http://localhost:3000
-# API docs: http://localhost:8000/docs
+# 3. Открыть в браузере
+# Frontend:     http://localhost:3000
+# API docs:     http://localhost:8000/docs
 # Neo4j Browser: http://localhost:7474
 ```
 
 ### 12.3. Системные требования
 
+**С `LLM_PROVIDER=groq`** (по умолчанию) инференс идёт в облаке — локально нужны
+только Neo4j, backend и frontend:
+
 | Компонент | Минимум | Рекомендуется |
 |-----------|---------|---------------|
-| CPU | 4 ядра | 8 ядер |
-| RAM | 16 ГБ | 32 ГБ |
-| GPU VRAM | 8 ГБ (7B модель) | 16+ ГБ (для 13B+) |
-| Диск | 20 ГБ | 50+ ГБ |
-| OS | Linux (Docker) | Ubuntu 22.04+ |
+| CPU | 2 ядра | 4 ядра |
+| RAM | 4 ГБ | 8 ГБ |
+| Диск | 5 ГБ | 20 ГБ |
+| OS | Linux/macOS (Docker) | Ubuntu 22.04+ |
 
-Без GPU: можно запустить, но инференс будет в ~10–20 раз медленнее (CPU mode через Ollama).
+**С `LLM_PROVIDER=ollama`** (полностью локально) к этому добавляется контейнер
+Ollama: ориентир — 16 ГБ RAM и GPU с 8+ ГБ VRAM для модели уровня 7–8B; без GPU
+запуск возможен, но инференс в ~10–20 раз медленнее (CPU mode).
 
 ---
 
 ## 13. Тестирование
 
-### 13.1. Unit-тесты
+### 13.1. Unit-тесты (реализовано)
+
+В репозитории есть `backend/tests` (pytest + pytest-asyncio), `conftest.py`
+содержит `MockLLMClient` и фикстуры `mock_llm` / `mock_llm_with_triplets`:
+
+- `test_chunking.py` — 5 тестов: короткий текст → 1 чанк, длинный → несколько,
+  контроль размера чанка, последовательность индексов, пустой текст → 0 чанков.
+- `test_extraction.py` — 5 async-тестов с `MockLLMClient`: парсинг JSON, типы
+  сущностей, битый JSON → пустой результат, пустой массив, пропуск неполных триплетов.
+- `test_normalization.py` — 5 тестов: алиасы сущностей и предикатов,
+  дедупликация, полный `normalize_triplets`, слияние похожих имён
+  (`TensorFlow`/`Tensorflow`).
 
 ```python
-# tests/test_chunking.py
-def test_chunking_respects_size():
-    service = ChunkingService(chunk_size=100, overlap=20)
-    text = "Sentence one. " * 50
-    chunks = service.split(text)
-    assert all(len(c.text) // 4 <= 120 for c in chunks)  # с запасом
-
-def test_chunking_overlap():
-    service = ChunkingService(chunk_size=100, overlap=20)
-    text = "Sentence one. Sentence two. Sentence three. " * 20
-    chunks = service.split(text)
-    for i in range(1, len(chunks)):
-        # Конец предыдущего чанка должен пересекаться с началом следующего
-        assert chunks[i-1].text[-50:] in chunks[i].text or \
-               any(s in chunks[i].text for s in chunks[i-1].text.split(".")[-3:])
-
-# tests/test_normalization.py
-def test_alias_normalization():
-    service = NormalizationService()
-    triplet = Triplet(subject="вшэ", predicate="находится_в", object="Пермь")
-    result = service._normalize_entity_names(triplet)
-    assert result.subject == "НИУ ВШЭ"
-
-def test_deduplication():
-    service = NormalizationService()
-    triplets = [
-        Triplet(subject="Google", predicate="разработала", object="BERT"),
-        Triplet(subject="google", predicate="разработала", object="BERT"),
-        Triplet(subject="Google", predicate="создала", object="BERT"),
-    ]
-    result = service.normalize_triplets(triplets)
-    assert len(result) == 1  # все три — одно и то же
-
-# tests/test_extraction.py (с мок-LLM)
+# tests/test_extraction.py
 @pytest.mark.asyncio
 async def test_extraction_parses_json():
-    mock_llm = MockLLMClient(response='{"triplets": [{"subject": "A", "predicate": "rel", "object": "B"}]}')
-    service = ExtractionService(mock_llm)
+    llm = MockLLMClient(
+        response='{"triplets": [{"subject": "A", "predicate": "rel", "object": "B"}]}'
+    )
+    service = ExtractionService(llm)
     result = await service.extract_from_chunk("Test text", 0, 1)
     assert len(result.triplets) == 1
     assert result.triplets[0].subject == "A"
 ```
 
-### 13.2. Интеграционные тесты
+Запуск: `cd backend && pytest`.
 
-- Поднимаем Neo4j в Docker (testcontainers)
-- Загружаем тестовый документ через API
-- Проверяем, что триплеты записались в Neo4j
-- Проверяем, что QA возвращает корректные ответы
+### 13.2. Интеграционные тесты (план, пока не реализованы)
+
+- Поднять Neo4j в Docker (testcontainers).
+- Загрузить тестовый документ через API, проверить запись триплетов в Neo4j.
+- Проверить, что QA возвращает корректные ответы.
+
+> Также пока нет тестов `graph_service`/`qa_service`/`entity_type_service`,
+> тестов API-роутов и тестов фронтенда.
 
 ### 13.3. Тестовые тексты
 
@@ -1649,63 +1740,70 @@ async def test_extraction_parses_json():
 
 | Решение | Альтернатива | Почему выбрано |
 |---------|-------------|----------------|
-| Ollama для LLM | vLLM, llama.cpp, TGI | Простейшая установка, поддержка GPU/CPU, API совместим с OpenAI |
+| OpenAI-совместимый клиент (Groq / Ollama) | Привязка к одному провайдеру | Один код обслуживает облако и локальный запуск; провайдер — флаг в `.env` |
 | Приблизительная токенизация | tiktoken | Не добавляем зависимость; ±10% не критично |
 | SequenceMatcher для дедупликации | Embedding similarity | Проще, быстрее; эмбеддинги добавим позже |
 | Один label Entity + type | Отдельные labels для типов | Проще MERGE-логика; labels добавляем дополнительно |
 | SSE для прогресса | WebSocket | Однонаправленный поток, проще реализация |
-| JSON format Ollama | Ручной парсинг | Ollama гарантирует валидный JSON |
+| JSON-mode у LLM | Ручной парсинг | OpenAI-совместимый `response_format` даёт валидный JSON |
+| SQLite для метаданных | Postgres / in-memory | Персистентность без отдельного сервиса; репозиторий заменяем через `Protocol` |
 | vis.js | D3.js, Cytoscape.js | Лучший баланс функционала и простоты для force-directed |
 
 ### 14.2. Известные ограничения
 
-1. **Качество зависит от модели**: 7B модели хуже GPT-4 на сложных текстах. Решение: возможность замены модели.
+1. **Качество зависит от модели**: локальные 7–8B модели хуже на сложных текстах. Решение: смена провайдера/модели через `.env`.
 2. **Нет OCR**: PDF должны содержать текстовый слой. Сканы не поддерживаются.
-3. **Нет потоковой обработки**: система обрабатывает документы по одному.
+3. **Последовательная обработка**: чанки документа обрабатываются по одному; переизвлечение всего графа защищено от повторного запуска.
 4. **Кореференция ограничена**: простой fuzzy matching. Сложные случаи ("он", "компания", "этот институт") не разрешаются.
 5. **Визуализация масштабируется до ~1000 узлов**: для больших графов нужна серверная фильтрация.
-6. **Text-to-Cypher не идеален**: на сложных вопросах может генерировать некорректные запросы.
+6. **Text-to-Cypher не идеален**: на сложных вопросах может генерировать некорректные запросы (есть fallback).
+7. **Состояние фоновых задач — в памяти процесса**: рестарт во время обработки теряет трекинг прогресса (записанные триплеты остаются в Neo4j).
+8. **Приватность**: с `LLM_PROVIDER=groq` тексты уходят в облако; полностью локальный режим — только с Ollama.
 
 ### 14.3. Что НЕ входит в MVP
 
 - Аутентификация и многопользовательский режим
 - GraphRAG (community detection, иерархические суммаризации)
-- Дообучение LLM (LoRA/QLoRA) — только инструкция в README
+- Дообучение LLM (LoRA/QLoRA)
 - Экспорт графа (RDF, CSV) — добавится позже
-- Мультиязычный интерфейс (UI на русском, поддержка RU и EN текстов)
-- Batch-обработка множества документов
+- Batch-обработка множества документов одним запросом
+- Горизонтальное масштабирование (SQLite рассчитан на одиночный инстанс)
 
 ---
 
 ## 15. Дорожная карта
 
-### Phase 1: MVP (2 недели)
-- [ ] Backend: FastAPI skeleton, config, CORS
-- [ ] Document upload + text extraction (PDF, DOCX, TXT)
-- [ ] Chunking service
-- [ ] LLM client (Ollama integration)
-- [ ] Extraction service + промпты
-- [ ] Нормализация (базовая: aliases, dedup)
-- [ ] Neo4j service (save, query, stats)
-- [ ] API: documents, graph, extraction
-- [ ] Frontend: upload, граф (vis.js), базовый UI
-- [ ] Docker Compose
-- [ ] README с инструкцией запуска
+### Phase 1: MVP — реализовано
+- [x] Backend: FastAPI skeleton, settings, CORS
+- [x] Document upload + text extraction (PDF, DOCX, TXT) + вставка текста
+- [x] Chunking service
+- [x] LLM client (OpenAI-совместимый: Groq / Ollama)
+- [x] Extraction service + промпты
+- [x] Нормализация (aliases из JSON, dedup, similarity merge)
+- [x] Neo4j service (save, query, stats, delete)
+- [x] API: documents, graph, extraction
+- [x] Frontend: upload, граф (vis.js), базовый UI
+- [x] Docker Compose
 
-### Phase 2: QA + Polish (1 неделя)
-- [ ] QA service (Text-to-Cypher)
-- [ ] Fallback-механизм
-- [ ] Answer generation
-- [ ] Frontend: QA panel, search, filters, stats
-- [ ] SSE для прогресса извлечения
-- [ ] Обработка ошибок (LLM timeout, bad JSON, Neo4j connection)
+### Phase 2: QA + Polish — реализовано
+- [x] QA service (Text-to-Cypher)
+- [x] Fallback-механизм
+- [x] Answer generation
+- [x] Frontend: QA panel, search, filters, stats, document list
+- [x] SSE для прогресса извлечения
+- [x] Обработка ошибок (bad JSON → retry, статус `error` у документа)
 
-### Phase 3: Тестирование и эксперименты (1 неделя)
-- [ ] Unit-тесты (chunking, normalization, extraction)
+### Phase 3: Тестирование и эксперименты — частично
+- [x] Unit-тесты (chunking, normalization, extraction)
 - [ ] Интеграционные тесты (Neo4j, full pipeline)
-- [ ] Бенчмарк на 3 типах текстов
-- [ ] Сравнение моделей (Mistral 7B vs LLaMA 3 8B)
-- [ ] Документация (README, API docs)
+- [ ] Бенчмарк на тестовых текстах
+- [ ] Сравнение моделей/провайдеров
+
+### Сверх исходного плана — реализовано
+- [x] Персистентность документов в SQLite (переживают рестарт)
+- [x] Глобальный реестр типов сущностей (CRUD через UI/API) с описаниями для промпта
+- [x] Переизвлечение всего графа под изменённый набор типов + проверка согласованности
+- [x] Удаление отдельных узлов из графа
 
 ### Phase 4: Расширения (после защиты)
 - [ ] GraphRAG (community detection + summaries)
@@ -1713,6 +1811,7 @@ async def test_extraction_parses_json():
 - [ ] Экспорт (RDF, CSV, JSON-LD)
 - [ ] Batch upload
 - [ ] Аутентификация
+- [ ] Постоянное хранилище состояния фоновых задач / очередь воркеров
 
 ---
 
@@ -1751,13 +1850,20 @@ async def test_extraction_parses_json():
 
 ### Cypher-запросы
 
+Все триплеты чанка пишутся одним `UNWIND ... MERGE` (концептуально — для каждого
+триплета):
+
 ```cypher
-MERGE (s:Entity {name: "Google"}) ON CREATE SET s.type = "Organization", s.created_at = datetime()
-MERGE (o:Entity {name: "BERT"}) ON CREATE SET o.type = "Technology", o.created_at = datetime()
-MERGE (s)-[r:RELATES {type: "разработала"}]->(o) ON CREATE SET r.source = "doc_001"
-SET s:Organization
-SET o:Technology
--- ... и так для каждого триплета
+UNWIND $triplets AS t
+MERGE (s:Entity {name: t.subject_name})
+  ON CREATE SET s.type = t.subject_type, s.created_at = datetime()
+MERGE (o:Entity {name: t.object_name})
+  ON CREATE SET o.type = t.object_type, o.created_at = datetime()
+MERGE (s)-[r:RELATES {type: t.predicate}]->(o)
+  ON CREATE SET r.source = $source, r.context = t.context,
+                r.confidence = t.confidence, r.created_at = datetime()
+-- затем отдельными запросами навешиваются динамические labels:
+-- MATCH (n:Entity {name: $name}) SET n:`Organization`  и т.п.
 ```
 
 ### QA
